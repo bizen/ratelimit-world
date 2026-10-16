@@ -498,7 +498,8 @@ case "\${LC_ALL:-\${LANG:-}}" in ja*) NEED="Node.js 18 以上が必要です" ;;
 command -v node >/dev/null 2>&1 || { echo "$NEED: https://nodejs.org" >&2; exit 1; }
 mkdir -p "$HOME/.ratelimit-world"
 curl -fsSL "${origin}/cli.mjs" -o "$HOME/.ratelimit-world/ratelimit-world.mjs"
-node "$HOME/.ratelimit-world/ratelimit-world.mjs" setup --server "${origin}" < /dev/tty
+# setup needs no input; use /dev/null so it never reads the rest of this piped script
+node "$HOME/.ratelimit-world/ratelimit-world.mjs" setup --server "${origin}" < /dev/null
 `;
 }
 
