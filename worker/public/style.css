@@ -304,8 +304,9 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .goal-desc { font-size: 12px; color: var(--muted); }
 .goal-xp { font: 700 11px var(--mono); color: var(--ember); margin-top: 4px; }
 .waiting { display: flex; align-items: center; gap: 10px; color: var(--muted); font-weight: 700; }
-.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--violet); }
-@media (prefers-reduced-motion: no-preference) { .dot { animation: blink 1.2s ease-in-out infinite; } @keyframes blink { 50% { opacity: .2; } } }
+/* 点滅は「PC からの連絡を待っています」の表示だけ (7日間の丸などに広がらないように限定する) */
+.waiting .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--violet); }
+@media (prefers-reduced-motion: no-preference) { .waiting .dot { animation: blink 1.2s ease-in-out infinite; } @keyframes blink { 50% { opacity: .2; } } }
 .reveal { background: var(--surface); border: 2px solid var(--go); border-radius: 22px; padding: 20px; margin: 12px 0; }
 .reveal-title { font: 400 24px var(--display); color: var(--go); margin: 0 0 12px; }
 .reveal-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
