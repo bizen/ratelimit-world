@@ -271,3 +271,29 @@ test("profileStats: bests, restarts and patterns", async () => {
   assert.equal(p.goalDays, 1);
   assert.equal(p.bestWeek.week, "2026-10-05");
 });
+
+test("league: week bounds, XP in the week, zones and settlement", async () => {
+  const { leagueWeek, leagueXp, zones, settle, nextTier } = await import("../src/league.js");
+  const w = leagueWeek(Date.UTC(2026, 9, 18, 23, 0)); // 日曜 (UTC)
+  assert.equal(w.id, "2026-10-12");
+  assert.equal(leagueWeek(Date.UTC(2026, 9, 19, 0, 0)).id, "2026-10-19");
+  const H = 3600e3, M = 60e3;
+  // 月曜 0:30 UTC の枠は今週、日曜 23:30 UTC の枠は先週
+  const ws = [
+    { tool: "claude", hit_at: Date.UTC(2026, 9, 11, 23, 30), reset_at: Date.UTC(2026, 9, 12, 4, 30), resumed_at: Date.UTC(2026, 9, 12, 4, 31) },
+    { tool: "claude", hit_at: Date.UTC(2026, 9, 12, 0, 30), reset_at: Date.UTC(2026, 9, 12, 5, 30), resumed_at: null },
+  ];
+  const s = computeStats(ws, { tz: "UTC", goal: 5, now: Date.UTC(2026, 9, 14) });
+  // 今週の枠 100 XP + 月曜に達成したデイリークエスト
+  assert.equal(leagueXp(s, w), 100 + (s.days["2026-10-12"].quests ?? 0) * 50);
+  assert.equal(leagueXp(s, { start: w.start - 7 * 24 * H, end: w.start }), s.days["2026-10-11"].xp);
+  assert.deepEqual(zones(30, 0), { up: 7, down: 0 });
+  assert.deepEqual(zones(30, 3), { up: 7, down: 5 });
+  assert.deepEqual(zones(3, 3), { up: 1, down: 0 });
+  assert.deepEqual(zones(30, 9), { up: 0, down: 5 });
+  const r = settle([{ user_id: 1, xp: 50, joined_at: 2 }, { user_id: 2, xp: 900, joined_at: 3 }, { user_id: 3, xp: 50, joined_at: 1 }, { user_id: 4, xp: 10, joined_at: 1 }, { user_id: 5, xp: 5, joined_at: 1 }], 2);
+  assert.deepEqual(r.map((x) => [x.user_id, x.rank, x.result]), [[2, 1, "up"], [3, 2, "up"], [1, 3, "stay"], [4, 4, "stay"], [5, 5, "down"]]);
+  assert.equal(nextTier({ tier: 2, result: "up" }), 3);
+  assert.equal(nextTier({ tier: 0, result: "down" }), 0);
+  assert.equal(nextTier(null), 0);
+});

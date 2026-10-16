@@ -147,6 +147,7 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
   const thisWeek = weekKey(now, tz);
   const days = {};
   const todayWindows = [];
+  const xpLog = []; // いつ何 XP もらったか (リーグは世界共通の週で数えるので、時刻つきで残す)
   let xp = 0, weekXp = 0;
   for (const w of ws) {
     const k = dayKey(w.hit_at, tz);
@@ -159,12 +160,14 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     const late = delayOf(w);
     if (late != null) d.lateMin += Math.round(late / MIN);
     xp += x;
+    xpLog.push({ at: w.hit_at, xp: x });
     if (weekKey(w.hit_at, tz) === thisWeek) weekXp += x;
   }
   // 週間リミット: 大きなごほうび。さらにリセットまでの日は 5時間枠を使えないので、ストリークを自動で守る
   const locked = new Set();
   for (const w of weekly) {
     xp += WEEKLY_XP;
+    xpLog.push({ at: w.hit_at, xp: WEEKLY_XP });
     if (weekKey(w.hit_at, tz) === thisWeek) weekXp += WEEKLY_XP;
     const k = dayKey(w.hit_at, tz);
     (days[k] ??= { count: 0, claude: 0, codex: 0, xp: 0, lateMin: 0 }).weekly = (days[k].weekly ?? 0) + 1;
@@ -177,11 +180,13 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
   for (const w of ws) {
     const hk = dayKey(w.hit_at, tz);
     if (+localTime(w.hit_at, tz).slice(0, 2) < 12) qd(hk).beforeNoon = true;
+    qd(hk).lastAt = Math.max(qd(hk).lastAt ?? 0, w.hit_at);
     if (w.reset_at > now) continue;
     const d = w.resumed_at != null ? Math.max(0, w.resumed_at - w.reset_at) : now - w.reset_at;
     if (!w.ended_at && d > CHASE_MS) continue; // 休憩扱い
     const r = qd(dayKey(w.reset_at, tz));
     r.resets++;
+    r.lastAt = Math.max(r.lastAt ?? 0, w.resumed_at ?? w.reset_at);
     const done = w.ended_at || w.resumed_at != null;
     if (w.ended_at || (done && d <= QUICK_MS)) r.quick++;
     if (w.ended_at || (done && d <= 15 * MIN)) r.quick15++;
@@ -202,6 +207,7 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     (days[k] ??= { count: 0, claude: 0, codex: 0, xp: 0, lateMin: 0 }).xp += add;
     days[k].quests = n;
     xp += add;
+    xpLog.push({ at: qdays[k].lastAt ?? 0, xp: add });
     if (k >= thisWeek && k <= today) weekXp += add;
   }
   const todayQuests = questsOf(today);
@@ -328,7 +334,7 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     weeklyLocks: weekly.filter((w) => w.reset_at > now).map((w) => ({ tool: w.tool, resetAt: w.reset_at })),
     trophies: weekly.length,
     quickRun,
-    xp, weekXp, week: thisWeek,
+    xp, weekXp, week: thisWeek, xpLog,
     total: ws.length,
     days,
     tools,

@@ -1,7 +1,8 @@
 // サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js、文言は i18n.js。
 // 各ページは ctx = { user, lang, t, path } を受け取る (t は翻訳関数)
 import { TOOL_NAME, addDays, localTime, comboXp, moodOf, WINDOW_MS } from "./logic.js";
-import { clientStrings, tierName, fmtWhen } from "./i18n.js";
+import { clientStrings, tierName, fmtWhen, leagueName } from "./i18n.js";
+import { TIER_EMOJI } from "./league.js";
 
 // 課金プランの表示名。CLI が送ってくる値 → 人が読める名前 (固有名詞なので言語で変えない)
 const PLAN_NAMES = {
@@ -181,6 +182,49 @@ function mascot(ctx, s, now) {
   const tool = m.tool ? TOOL_NAME[m.tool] : "";
   const text = ctx.t(`mood.${m.key}`, { n: m.n, m: m.m, left: m.left, tool });
   return `<section class="mascot mood-${m.mood}" aria-label="${esc(ctx.t("mood.aria"))}"><div class="limi">${limi(m.mood)}</div><p class="bubble">${esc(text)}</p></section>`;
+}
+
+// リーグ: ツールごとに 1枚。昇格ゾーン (上位) と降格ゾーン (下位) の境目に線を引く
+function leagueLeft(ctx, ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  return ctx.t("lg.left", Math.floor(m / 1440), Math.floor(m / 60) % 24, m % 60);
+}
+
+function leagueCards(ctx, data, s, now) {
+  if (!data?.leagues.length) return "";
+  const { user, t, lang } = ctx;
+  const { week } = data;
+  return data.leagues.map((L) => {
+    const name = leagueName(lang, L.tier);
+    const [tool, plan] = L.board.split(":");
+    const lastName = L.last ? leagueName(lang, L.last.result === "up" ? L.last.tier + 1 : L.last.result === "down" ? L.last.tier - 1 : L.last.tier) : "";
+    const last = L.last ? `<p class="lg-last ${L.last.result}">${t(L.last.result === "up" ? "lg.lastUp" : L.last.result === "down" ? "lg.lastDown" : "lg.lastStay", L.last.rank, esc(lastName))}</p>` : "";
+    const n = L.members.length;
+    const rows = L.members.map((m, i) => {
+      const zone = i < L.zones.up && m.xp > 0 ? "up" : i >= n - L.zones.down ? "down" : "";
+      const line = i === L.zones.up && L.zones.up > 0 ? `<li class="lg-line up" aria-hidden="true"><span>${t("lg.up")}</span></li>`
+        : i === n - L.zones.down && L.zones.down > 0 ? `<li class="lg-line down" aria-hidden="true"><span>${t("lg.down")}</span></li>` : "";
+      return `${line}<li class="${zone} ${m.user_id === user.id ? "you" : ""}">
+        <span class="rank">${i + 1}</span>
+        ${m.avatar_url ? `<img src="${esc(m.avatar_url)}" alt="">` : `<span class="noav"></span>`}
+        <a href="/@${esc(m.login)}">@${esc(m.login)}</a>${m.user_id === user.id ? `<small class="fr-you">${t("lg.you")}</small>` : "<span></span>"}
+        <b>${m.xp.toLocaleString()} XP</b>
+      </li>`;
+    }).join("");
+    const body = !user.public ? `<p class="muted">${t("lg.private")}</p>`
+      : !L.joined ? `<p class="muted">${t("lg.notYet", esc(name))}</p>`
+      : `<ol class="board lg-list">${rows}</ol>`;
+    return `<section class="card league tier-${L.tier}" id="league-${tool}">
+  <div class="lg-head">
+    <span class="lg-badge" aria-hidden="true">${TIER_EMOJI[L.tier]}</span>
+    <div><h2 class="h3">${t("lg.h", esc(name))}</h2><p class="muted small">${esc(planName(ctx, tool, plan))}</p></div>
+  </div>
+  <p class="lg-ends">${t("lg.ends", esc(fmtWhen(lang, week.end, s.tz)), leagueLeft(ctx, week.end - now))}</p>
+  ${last}
+  ${body}
+  <p class="muted small">${t("lg.rules")}</p>
+</section>`;
+  }).join("");
 }
 
 // フレンド: 自分とフォローしている人を今週の XP 順に並べる。各行に 🔥連続・今日の枠・今の状況
@@ -485,7 +529,7 @@ function dial(ctx, tool, s, now) {
 </article>`;
 }
 
-export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = [], flash = null }) {
+export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = [], flash = null, leagues = null }) {
   const { user, t, lang } = ctx;
   const now = Date.now();
   const left = Math.max(0, s.goal - s.todayCount);
@@ -547,6 +591,8 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
   ${dial(ctx, "codex", s, now)}
 </section>
 
+${leagueCards(ctx, leagues, s, now)}
+
 ${friendsCard(ctx, s, friends, flash, origin, now)}
 
 <section class="card">
@@ -588,6 +634,7 @@ ${friendsCard(ctx, s, friends, flash, origin, now)}
       ${chk("late")}
       ${chk("pinch")}
       ${chk("goal")}
+      ${chk("league")}
     </fieldset>
     <label class="toggle"><input type="checkbox" name="statusline" ${user.claude_statusline ? "checked" : ""}><span>${t("settings.statusline")}<small class="hint">${t("settings.statusline.hint")}</small></span></label>
     <label class="toggle"><input type="checkbox" name="public" ${user.public ? "checked" : ""}><span>${t("settings.public")}</span></label>
@@ -736,7 +783,8 @@ export function profile(ctx, u, s, origin, social = {}) {
 <section class="profile-head">
   ${u.avatar_url ? `<img class="avatar" src="${esc(u.avatar_url)}" alt="">` : ""}
   <div class="ph-main"><h1 class="h2">@${esc(u.login)}</h1>${u.name && u.name !== u.login ? `<p class="muted">${esc(u.name)}</p>` : ""}<p class="plans">${planBadges(ctx, u)}</p>
-    <p class="muted small">${t("fr.followers", social.followers ?? 0)}</p></div>
+    <p class="muted small">${[u.created_at ? t("p.joined", esc(new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", { year: "numeric", month: "long" }).format(new Date(u.created_at)))) : "", t("fr.followers", social.followers ?? 0)].filter(Boolean).join(" · ")}</p>
+    ${(social.leagues ?? []).length ? `<p class="lg-tags">${social.leagues.map((l) => `<span class="lg-tag">${TIER_EMOJI[l.tier]} ${esc(t("lg.h", leagueName(lang, l.tier)))} <small>${l.tool === "claude" ? "Claude" : "Codex"}</small></span>`).join("")}</p>` : ""}</div>
   ${followBtn}
 </section>
 ${social.flash === "added" ? `<p class="fr-flash" role="status">${t("fr.added", esc(u.login))} <a href="/me#friends">${t("fr.seeAll")}</a></p>` : ""}

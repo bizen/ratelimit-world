@@ -659,3 +659,24 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .hours i.top { background: var(--ember); }
 .hours-axis { display: flex; justify-content: space-between; font: 700 11px var(--mono); color: var(--muted); margin-top: 4px; }
 .private-note { margin: 12px 0; padding: 10px 14px; border-radius: 12px; background: var(--violet-soft); font-weight: 700; font-size: 14px; }
+
+/* リーグ */
+.lg-head { display: flex; align-items: center; gap: 12px; }
+.lg-head .h3 { margin: 0; }
+.lg-head p { margin: 0; }
+.lg-badge { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; font-size: 26px; background: var(--paper); flex: none; }
+.lg-ends { margin: 10px 0 0; font: 700 12px var(--mono); color: var(--muted); }
+.lg-last { margin: 10px 0 0; padding: 8px 12px; border-radius: 12px; font-weight: 700; font-size: 14px; background: var(--paper); }
+.lg-last.up { background: color-mix(in srgb, var(--go) 16%, transparent); }
+.lg-last.down { background: color-mix(in srgb, var(--ember) 16%, transparent); }
+.lg-list li { grid-template-columns: 26px 28px 1fr auto auto; padding: 7px 4px; }
+.lg-list img, .lg-list .noav { width: 28px; height: 28px; }
+.lg-list li.up .rank { color: var(--go); }
+.lg-list li.down .rank { color: var(--ember); }
+.lg-list .lg-line { display: block; border-top: 0; padding: 2px 0; }
+.lg-line span { display: block; text-align: center; font: 700 11px var(--mono); border-top: 2px dashed currentColor; padding-top: 4px; }
+.lg-line.up { color: var(--go); }
+.lg-line.down { color: var(--ember); }
+.lg-tags { margin: 6px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.lg-tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; background: var(--violet-soft); color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 700; }
+.lg-tag small { color: var(--muted); font-weight: 600; }

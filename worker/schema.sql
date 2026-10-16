@@ -107,3 +107,29 @@ CREATE TABLE IF NOT EXISTS follows (
   PRIMARY KEY (follower_id, followee_id)
 );
 CREATE INDEX IF NOT EXISTS follows_followee ON follows (followee_id);
+
+-- リーグ: 週 (月曜 0:00 UTC) × ツール×課金プラン × 段位 ごとに、最大 30人のグループ
+CREATE TABLE IF NOT EXISTS league_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  week TEXT NOT NULL,                -- 週の月曜 (UTC) '2026-10-12'
+  board TEXT NOT NULL,               -- 'claude:max_20x' など
+  tier INTEGER NOT NULL,             -- 0 = ブロンズ … 9 = ダイヤモンド
+  size INTEGER NOT NULL DEFAULT 0,
+  settled INTEGER NOT NULL DEFAULT 0 -- 週が終わって順位と昇格/降格を確定したか
+);
+CREATE INDEX IF NOT EXISTS league_groups_open ON league_groups (week, board, tier);
+CREATE INDEX IF NOT EXISTS league_groups_settle ON league_groups (settled, week);
+
+CREATE TABLE IF NOT EXISTS league_members (
+  user_id INTEGER NOT NULL,
+  tool TEXT NOT NULL,
+  week TEXT NOT NULL,
+  group_id INTEGER NOT NULL,
+  tier INTEGER NOT NULL,
+  xp INTEGER NOT NULL DEFAULT 0,     -- その週の XP (同期のたびに更新し、確定時の値が最終結果)
+  joined_at INTEGER NOT NULL,
+  rank INTEGER,                      -- 確定後の順位
+  result TEXT,                       -- 確定後: 'up' | 'down' | 'stay'
+  PRIMARY KEY (user_id, tool, week)
+);
+CREATE INDEX IF NOT EXISTS league_members_group ON league_members (group_id);

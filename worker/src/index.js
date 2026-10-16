@@ -5,6 +5,7 @@ import { pickLang, tr, LANGS } from "./i18n.js";
 import { notice } from "./notice.js";
 import { costOf, lostWindowsOf, PRICING_AS_OF } from "./pricing.js";
 import * as pages from "./pages.js";
+import { leagueWeek, prevWeek, leagueXp, settle, nextTier, byStanding, zones, LEAGUE_SIZE } from "./league.js";
 
 const SESSION_COOKIE = "rw_session";
 const SESSION_DAYS = 90;
@@ -37,7 +38,7 @@ function sameOrigin(req) {
   return !o || o === new URL(req.url).origin;
 }
 
-const NOTIFY_DEFAULTS = { hit: true, soon: true, reset: true, late: true, pinch: true, goal: true };
+const NOTIFY_DEFAULTS = { hit: true, soon: true, reset: true, late: true, pinch: true, goal: true, league: true };
 const LEAD_CHOICES = [1, 3, 5, 10, 15]; // 「もうすぐリセット」を送る何分前
 const parseNotify = (u) => { try { return { ...NOTIFY_DEFAULTS, ...JSON.parse(u.notify) }; } catch { return { ...NOTIFY_DEFAULTS }; } };
 
@@ -184,6 +185,97 @@ async function follow(req, env, user) {
   if (n.n >= MAX_FOLLOWS) return back("full");
   await env.DB.prepare("INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)").bind(user.id, target.id, Date.now()).run();
   return back("added");
+}
+
+// ---------- leagues ----------
+const LEAGUE_TOOLS = ["claude", "codex"];
+const boardOf = (u, tool) => `${tool}:${u[`${tool}_plan`] || "unknown"}`;
+
+// 同期のたびに: 今週 (と、まだ確定していない先週) のリーグの XP を更新する。
+// 今週はじめて XP が入ったら、前の週の結果で決まる段位の、空きのあるグループに入る。プロフィール非公開の人は参加しない
+async function syncLeagues(env, user, now = Date.now()) {
+  if (!user.public) return;
+  const week = leagueWeek(now), prev = prevWeek(week);
+  const [{ results: ws }, weekly, { results: mine }] = await Promise.all([
+    env.DB.prepare("SELECT tool, hit_at, COALESCE(ended_at, reset_at) AS reset_at, resumed_at, ended_at FROM windows WHERE user_id = ? AND hit_at > ?").bind(user.id, prev.start - 2 * DAY).all(),
+    userWeekly(env, user.id, 16),
+    env.DB.prepare("SELECT m.*, g.settled FROM league_members m JOIN league_groups g ON g.id = m.group_id WHERE m.user_id = ? AND m.week >= ?").bind(user.id, prev.id).all(),
+  ]);
+  for (const tool of LEAGUE_TOOLS) {
+    const s = computeStats(ws.filter((w) => w.tool === tool), { tz: user.tz, goal: user.goal, now, weekly: weekly.filter((w) => w.tool === tool), seed: user.id });
+    const last = mine.find((m) => m.tool === tool && m.week === prev.id);
+    if (last && !last.settled) await env.DB.prepare("UPDATE league_members SET xp = ? WHERE user_id = ? AND tool = ? AND week = ?").bind(leagueXp(s, prev), user.id, tool, prev.id).run();
+    const xp = leagueXp(s, week);
+    const cur = mine.find((m) => m.tool === tool && m.week === week.id);
+    if (cur) {
+      if (cur.xp !== xp) await env.DB.prepare("UPDATE league_members SET xp = ? WHERE user_id = ? AND tool = ? AND week = ?").bind(xp, user.id, tool, week.id).run();
+    } else if (xp > 0) {
+      await joinLeague(env, user, tool, week, xp, now);
+    }
+  }
+}
+
+async function joinLeague(env, user, tool, week, xp, now) {
+  // 段位は、いちばん最近参加した週の結果で決まる (確定していなければここで確定させる)
+  let prev = await env.DB.prepare("SELECT m.*, g.settled FROM league_members m JOIN league_groups g ON g.id = m.group_id WHERE m.user_id = ? AND m.tool = ? AND m.week < ? ORDER BY m.week DESC LIMIT 1")
+    .bind(user.id, tool, week.id).first();
+  if (prev && !prev.settled) {
+    await settleGroup(env, prev.group_id, now);
+    prev = await env.DB.prepare("SELECT * FROM league_members WHERE user_id = ? AND tool = ? AND week = ?").bind(user.id, tool, prev.week).first();
+  }
+  const tier = nextTier(prev), board = boardOf(user, tool);
+  let g = await env.DB.prepare("SELECT id FROM league_groups WHERE week = ? AND board = ? AND tier = ? AND size < ? ORDER BY id LIMIT 1").bind(week.id, board, tier, LEAGUE_SIZE).first();
+  g ??= await env.DB.prepare("INSERT INTO league_groups (week, board, tier) VALUES (?, ?, ?) RETURNING id").bind(week.id, board, tier).first();
+  const r = await env.DB.prepare("INSERT OR IGNORE INTO league_members (user_id, tool, week, group_id, tier, xp, joined_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(user.id, tool, week.id, g.id, tier, xp, now).run();
+  if (r.meta.changes) await env.DB.prepare("UPDATE league_groups SET size = size + 1 WHERE id = ?").bind(g.id).run();
+}
+
+// 週が終わったグループの順位と昇格/降格を確定し、結果を通知する
+async function settleGroup(env, groupId, now = Date.now()) {
+  const g = await env.DB.prepare("SELECT * FROM league_groups WHERE id = ?").bind(groupId).first();
+  if (!g || g.settled) return;
+  const { results: members } = await env.DB.prepare(
+    "SELECT m.user_id, m.tool, m.xp, m.joined_at, u.lang, u.notify FROM league_members m JOIN users u ON u.id = m.user_id WHERE m.group_id = ?",
+  ).bind(groupId).all();
+  const out = settle(members, g.tier);
+  const claimed = await env.DB.prepare("UPDATE league_groups SET settled = 1 WHERE id = ? AND settled = 0").bind(groupId).run();
+  if (!claimed.meta.changes) return; // 別の処理が先に確定した
+  await env.DB.batch(out.map((r) => env.DB.prepare("UPDATE league_members SET rank = ?, result = ? WHERE group_id = ? AND user_id = ?").bind(r.rank, r.result, groupId, r.user_id)));
+  for (const r of out) {
+    const m = members.find((x) => x.user_id === r.user_id);
+    if (!parseNotify(m).league || !(await claim(env, m.user_id, `league:${m.tool}:${g.week}`))) continue;
+    await pushToUser(env, m.user_id, notice(m, "league", null, now, { tool: m.tool, league: { ...r, tier: g.tier, n: members.length } }));
+  }
+}
+
+const hasLeague = (mine, tool) => mine.some((m) => m.tool === tool);
+
+// ダッシュボード用: 今週のリーグ (ツールごと) と、先週の結果
+async function leaguesFor(env, user, now = Date.now()) {
+  const week = leagueWeek(now), prev = prevWeek(week);
+  const { results: mine } = await env.DB.prepare("SELECT * FROM league_members WHERE user_id = ? ORDER BY week DESC LIMIT 20").bind(user.id).all();
+  const out = [];
+  for (const tool of LEAGUE_TOOLS) {
+    const cur = mine.find((m) => m.tool === tool && m.week === week.id);
+    const last = mine.find((m) => m.tool === tool && m.week === prev.id);
+    // 使っていないツールのリーグは出さない (今週・先週の参加か、PC から届いた課金プランがあれば使っているとみなす)
+    if (!cur && !hasLeague(mine, tool) && !user[`${tool}_plan`]) continue;
+    let members = [];
+    // まだ今週参加していなければ、いちばん最近の結果から入る段位を出す
+    const latest = mine.find((m) => m.tool === tool && m.week < week.id);
+    let board = boardOf(user, tool), tier = nextTier(latest?.result ? latest : latest ? { tier: latest.tier } : null);
+    if (cur) {
+      const g = await env.DB.prepare("SELECT board, tier FROM league_groups WHERE id = ?").bind(cur.group_id).first();
+      board = g.board; tier = g.tier;
+      ({ results: members } = await env.DB.prepare(
+        "SELECT m.user_id, m.xp, m.joined_at, u.login, u.avatar_url FROM league_members m JOIN users u ON u.id = m.user_id WHERE m.group_id = ?",
+      ).bind(cur.group_id).all());
+      members.sort(byStanding);
+    }
+    out.push({ tool, board, tier, joined: !!cur, members, zones: zones(members.length, tier), last: last?.result ? last : null });
+  }
+  return { week, leagues: out };
 }
 
 // 同じ通知を二度送らない。初めてなら true
@@ -347,8 +439,10 @@ async function handleSync(req, env) {
     .bind(tz, claudePlan, codexPlan, JSON.stringify(nextReset), now, user.id));
   await env.DB.batch(stmts);
 
-  const fresh = { ...user, tz, next_reset: JSON.stringify(nextReset) };
+  const fresh = { ...user, tz, next_reset: JSON.stringify(nextReset), claude_plan: claudePlan, codex_plan: codexPlan };
   const s = await statsFor(env, fresh, now);
+  // リーグの XP の更新に失敗しても、同期そのものは成功として返す
+  try { await syncLeagues(env, fresh, now); } catch (e) { console.log("league sync", e.message); }
   const prefs = parseNotify(fresh);
   // 週間リミットに当たったばかりなら、いちばん大きなごほうびを知らせる
   for (const w of weeklyAdded.filter((x) => now - x.hit_at < 60 * MIN)) {
@@ -579,6 +673,12 @@ async function runCron(env, now = Date.now()) {
     await pushToUser(env, w.user_id, notice(w, "soon", s, now, { tool: w.tool, w }));
   }
 
+  // 0.5) リーグ: 週が終わったグループの順位を確定する
+  const open = await env.DB.prepare("SELECT id FROM league_groups WHERE settled = 0 AND week < ? LIMIT 25").bind(leagueWeek(now).id).all();
+  for (const g of open.results) {
+    try { await settleGroup(env, g.id, now); } catch (e) { console.log("league settle", g.id, e.message); }
+  }
+
   // 1) リセット通知: 直近 3分以内にリセットされた枠
   const due = await env.DB.prepare(
     `SELECT w.*, u.tz, u.goal, u.notify, u.lang FROM windows w JOIN users u ON u.id = w.user_id
@@ -705,7 +805,11 @@ async function route(req, env) {
       env.DB.prepare("SELECT COUNT(*) AS n FROM follows WHERE followee_id = ?").bind(u.id).first(),
       user && user.id !== u.id ? env.DB.prepare("SELECT 1 AS y FROM follows WHERE follower_id = ? AND followee_id = ?").bind(user.id, u.id).first() : null,
     ]);
-    const social = { followers: followers.n, following: !!following, flash: url.searchParams.get("friend") };
+    // 今いるリーグ (今週まだ参加していなければ、いちばん最近の週)
+    const { results: lg } = await env.DB.prepare(
+      "SELECT tool, tier, MAX(week) AS week FROM league_members WHERE user_id = ? GROUP BY tool",
+    ).bind(u.id).all();
+    const social = { followers: followers.n, following: !!following, flash: url.searchParams.get("friend"), leagues: u.public ? lg : [] };
     const { s, p: ps, loss } = await profileData(env, u);
     return html(pages.profile(ctx, u, s, origin, { ...social, ps, loss }));
   }
@@ -728,9 +832,10 @@ async function route(req, env) {
     if (!user) return redirect("/login?next=/me");
     if (!user.onboarded_at) return redirect("/welcome");
     const hasCli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
-    const [s, friends] = await Promise.all([statsFor(env, user), friendsOf(env, user)]);
+    try { await syncLeagues(env, user); } catch (e) { console.log("league sync", e.message); }
+    const [s, friends, leagues] = await Promise.all([statsFor(env, user), friendsOf(env, user), leaguesFor(env, user)]);
     const flash = { kind: url.searchParams.get("friend"), who: url.searchParams.get("who") };
-    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user), friends, flash }));
+    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user), friends, flash, leagues }));
   }
   if (p.startsWith("/api/")) {
     if (!user) return json({ error: "unauthorized" }, 401);

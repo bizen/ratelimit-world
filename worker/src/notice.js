@@ -3,7 +3,7 @@ import { localTime, comboXp, WINDOW_MS, WEEKLY_XP } from "./logic.js";
 import { push, tierName, fmtWhen } from "./i18n.js";
 
 // スマホ通知の文面を、その人の言語で組み立てる
-export function notice(u, kind, s, now, { tool, w, minutes } = {}) {
+export function notice(u, kind, s, now, { tool, w, minutes, league } = {}) {
   const lang = u.lang === "en" ? "en" : "ja";
   const P = push(lang);
   const nextTier = s ? tierName(lang, s.nextTier) : "";
@@ -13,6 +13,7 @@ export function notice(u, kind, s, now, { tool, w, minutes } = {}) {
   else if (kind === "late") m = P.late(tool, minutes, s, { next: localTime(now + WINDOW_MS, s.tz) });
   else if (kind === "pinch") m = P.pinch(s);
   else if (kind === "goal") m = P.goal(s, { nextXp: s.nextXp, nextTier });
+  else if (kind === "league") m = P.league(tool, league);
   else if (kind === "weekly") m = P.weekly(tool, s, { when: fmtWhen(lang, w.reset_at, s.tz), xp: WEEKLY_XP });
   else if (kind === "hit") {
     const tw = s.todayWindows.find((x) => x.tool === tool && x.resetAt === w.reset_at) ?? s.todayWindows.at(-1);

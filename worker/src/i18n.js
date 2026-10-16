@@ -172,6 +172,20 @@ export const T = {
     "p.hoursAria": "時間帯ごとの使い切った枠の数",
     "p.private": "このプロフィールは非公開です。見られるのはあなただけです。",
     "p.private.link": "公開の設定へ",
+    "lg.h": (name) => `${name}リーグ`,
+    "lg.ends": (when, left) => `${when} に終了 · あと ${left}`,
+    "lg.up": "⬆ 昇格ゾーン",
+    "lg.down": "⬇ 降格ゾーン",
+    "lg.you": "あなた",
+    "lg.notYet": (name) => `今週はまだ参加していません。1枠使い切ると${name}リーグに入ります。`,
+    "lg.private": "リーグに参加するには、設定でプロフィールを公開してください。",
+    "lg.lastUp": (rank, name) => `先週は ${rank}位で${name}リーグに昇格！`,
+    "lg.lastDown": (rank, name) => `先週は ${rank}位で${name}リーグに降格…今週取り返そう`,
+    "lg.lastStay": (rank, name) => `先週は ${rank}位で${name}リーグに残留`,
+    "lg.rules": "同じプランの最大30人で、月曜 0:00 (UTC) からの1週間の XP を競います。上位は昇格、下位は降格。",
+    "lg.left": (d, h, m) => (d ? `${d}日 ${h}時間` : h ? `${h}時間 ${m}分` : `${m}分`),
+    "notify.league": "リーグの結果（昇格・降格）",
+    "p.joined": (d) => `${d}から参加`,
     "fr.h": "フレンド",
     "fr.you": "あなた",
     "fr.today": (c, g) => `今日 ${c}/${g}`,
@@ -545,6 +559,20 @@ export const T = {
     "p.hoursAria": "Windows maxed out by hour of day",
     "p.private": "This profile is private. Only you can see it.",
     "p.private.link": "Change in settings",
+    "lg.h": (name) => `${name} League`,
+    "lg.ends": (when, left) => `Ends ${when} · ${left} left`,
+    "lg.up": "⬆ Promotion zone",
+    "lg.down": "⬇ Demotion zone",
+    "lg.you": "you",
+    "lg.notYet": (name) => `You haven't joined this week yet. Max out a window to enter the ${name} League.`,
+    "lg.private": "Make your profile public in settings to join leagues.",
+    "lg.lastUp": (rank, name) => `Last week you finished #${rank} and moved up to the ${name} League!`,
+    "lg.lastDown": (rank, name) => `Last week you finished #${rank} and dropped to the ${name} League. Win it back!`,
+    "lg.lastStay": (rank, name) => `Last week you finished #${rank} and stayed in the ${name} League`,
+    "lg.rules": "Up to 30 people on the same plan compete on XP for a week starting Monday 00:00 UTC. The top move up, the bottom move down.",
+    "lg.left": (d, h, m) => (d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`),
+    "notify.league": "League results (promotion and demotion)",
+    "p.joined": (d) => `Joined ${d}`,
     "fr.h": "Friends",
     "fr.you": "you",
     "fr.today": (c, g) => `today ${c}/${g}`,
@@ -791,6 +819,13 @@ export function fmtWhen(lang, ms, tz) {
   }).format(new Date(ms));
 }
 
+// リーグの段位の名前 (0 = ブロンズ … 9 = ダイヤモンド)
+const LEAGUE_NAMES = {
+  ja: ["ブロンズ", "シルバー", "ゴールド", "サファイア", "ルビー", "エメラルド", "アメジスト", "パール", "オブシディアン", "ダイヤモンド"],
+  en: ["Bronze", "Silver", "Gold", "Sapphire", "Ruby", "Emerald", "Amethyst", "Pearl", "Obsidian", "Diamond"],
+};
+export const leagueName = (lang, tier) => (LEAGUE_NAMES[lang] ?? LEAGUE_NAMES.ja)[tier] ?? "";
+
 // ---------- スマホ通知の文面 (キャラクターの口調) ----------
 const pushJa = {
   soon(tool, s, { minutes, at }) {
@@ -841,6 +876,12 @@ const pushJa = {
   },
   test() {
     return { title: "🔥 通知テスト", body: "リセットの瞬間にこんなふうに届くよ！" };
+  },
+  league(tool, { rank, result, tier, n }) {
+    const name = (t) => `${leagueName("ja", t)}リーグ`;
+    if (result === "up") return { title: `🎉 ${name(tier + 1)}に昇格！`, body: `${TOOL[tool]} の${name(tier)}で ${n}人中 ${rank}位。今週はひとつ上で戦おう` };
+    if (result === "down") return { title: `😢 ${name(tier - 1)}に降格…`, body: `${TOOL[tool]} の${name(tier)}で ${n}人中 ${rank}位。今週取り返そう！` };
+    return { title: `🛡 ${name(tier)}に残留`, body: `${TOOL[tool]} で ${n}人中 ${rank}位。今週は昇格ゾーンを狙おう` };
   },
 };
 
@@ -893,6 +934,12 @@ const pushEn = {
   },
   test() {
     return { title: "🔥 Test notification", body: "This is how it'll look the moment a window resets!" };
+  },
+  league(tool, { rank, result, tier, n }) {
+    const name = (t) => `${leagueName("en", t)} League`;
+    if (result === "up") return { title: `🎉 Promoted to the ${name(tier + 1)}!`, body: `You finished #${rank} of ${n} in the ${TOOL[tool]} ${name(tier)}. Next week you play one level up` };
+    if (result === "down") return { title: `😢 Down to the ${name(tier - 1)}…`, body: `You finished #${rank} of ${n} in the ${TOOL[tool]} ${name(tier)}. Win it back this week!` };
+    return { title: `🛡 You stay in the ${name(tier)}`, body: `You finished #${rank} of ${n} for ${TOOL[tool]}. Aim for the promotion zone this week` };
   },
 };
 
