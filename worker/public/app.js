@@ -57,6 +57,12 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
   }
   if ($(".dial")) { tick(); setInterval(tick, 1000); }
 
+  // リーグのタブ (Claude と ChatGPT の両方に参加しているとき)
+  for (const tab of $$("[data-lg-tab]")) tab.addEventListener("click", () => {
+    for (const x of $$("[data-lg-tab]")) { x.classList.toggle("on", x === tab); x.setAttribute("aria-selected", x === tab ? "true" : "false"); }
+    for (const pnl of $$("[data-lg-panel]")) pnl.hidden = pnl.dataset.lgPanel !== tab.dataset.lgTab;
+  });
+
   // トークンロードのマップ: 開いたら「いまここ」が見えるところまで送る。外側を押しても閉じる
   const road = $("[data-road]");
   if (road) {

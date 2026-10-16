@@ -46,7 +46,7 @@ ${head}
 <header class="top">
   <a class="brand" href="${user ? "/me" : "/"}"><span class="name">ratelimit<span>.world</span></span><sub class="by">by bizencore</sub></a>
   <nav>
-    <a href="/leaderboard">${t("nav.board")}</a>
+    ${user ? `<a class="gear" href="/settings" aria-label="${t("nav.settings")}" title="${t("nav.settings")}">⚙️</a>` : ""}
     ${user ? `<a class="me" href="/@${esc(user.login)}">${user.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="">` : ""}@${esc(user.login)}</a>` : `<a class="btn small" href="/login">${t("nav.login")}</a>`}
   </nav>
 </header>
@@ -126,7 +126,6 @@ export function landing(ctx, origin) {
 
   <div class="cta">
     ${user ? `<a class="btn big" href="/me">${t("lp.open")}</a>` : `<a class="btn big" href="/login">${t("lp.start")}</a>`}
-    <a class="btn ghost" href="/leaderboard">${t("lp.board")}</a>
   </div>
 </section>
 
@@ -223,41 +222,63 @@ function leagueLeft(ctx, ms) {
   return ctx.t("lg.left", Math.floor(m / 1440), Math.floor(m / 60) % 24, m % 60);
 }
 
+// リーグ: 1枚のカード。ツール (プラン) が 2つあればタブで切り替える。
+// 30人ぶん全部は並べず、上位 3人と自分のまわりだけ (間は「…」)。昇格・降格ゾーンの境目に線を引く
 function leagueCards(ctx, data, s, now) {
   if (!data?.leagues.length) return "";
   const { user, t, lang } = ctx;
   const { week } = data;
-  return data.leagues.map((L) => {
+  const panel = (L) => {
     const name = leagueName(lang, L.tier);
-    const [tool, plan] = L.board.split(":");
     const lastName = L.last ? leagueName(lang, L.last.result === "up" ? L.last.tier + 1 : L.last.result === "down" ? L.last.tier - 1 : L.last.tier) : "";
     const last = L.last ? `<p class="lg-last ${L.last.result}">${t(L.last.result === "up" ? "lg.lastUp" : L.last.result === "down" ? "lg.lastDown" : "lg.lastStay", L.last.rank, esc(lastName))}</p>` : "";
     const n = L.members.length;
-    const rows = L.members.map((m, i) => {
+    const me = L.members.findIndex((m) => m.user_id === user.id);
+    const show = new Set(n <= 7 ? L.members.map((_, i) => i) : [0, 1, 2, me - 1, me, me + 1].filter((i) => i >= 0 && i < n));
+    let prev = -1, rows = "";
+    for (let i = 0; i < n; i++) {
+      if (!show.has(i)) continue;
+      if (i > prev + 1) rows += `<li class="lg-gap" aria-hidden="true">…</li>`;
+      const m = L.members[i];
       const zone = i < L.zones.up && m.xp > 0 ? "up" : i >= n - L.zones.down ? "down" : "";
-      const line = i === L.zones.up && L.zones.up > 0 ? `<li class="lg-line up" aria-hidden="true"><span>${t("lg.up")}</span></li>`
-        : i === n - L.zones.down && L.zones.down > 0 ? `<li class="lg-line down" aria-hidden="true"><span>${t("lg.down")}</span></li>` : "";
-      return `${line}<li class="${zone} ${m.user_id === user.id ? "you" : ""}">
+      if (i === prev + 1 && i === L.zones.up && L.zones.up > 0) rows += `<li class="lg-line up" aria-hidden="true"><span>${t("lg.up")}</span></li>`;
+      if (i === prev + 1 && i === n - L.zones.down && L.zones.down > 0) rows += `<li class="lg-line down" aria-hidden="true"><span>${t("lg.down")}</span></li>`;
+      rows += `<li class="${zone} ${m.user_id === user.id ? "you" : ""}">
         <span class="rank">${i + 1}</span>
         ${m.avatar_url ? `<img src="${esc(m.avatar_url)}" alt="">` : `<span class="noav"></span>`}
         <a href="/@${esc(m.login)}">@${esc(m.login)}</a>${m.user_id === user.id ? `<small class="fr-you">${t("lg.you")}</small>` : "<span></span>"}
         <b>${m.xp.toLocaleString()} XP</b>
       </li>`;
-    }).join("");
+      prev = i;
+    }
     const body = !user.public ? `<p class="muted">${t("lg.private")}</p>`
       : !L.joined ? `<p class="muted">${t("lg.notYet", esc(name))}</p>`
       : `<ol class="board lg-list">${rows}</ol>`;
-    return `<section class="card league tier-${L.tier}" id="league-${tool}">
-  <div class="lg-head">
-    <span class="lg-badge" aria-hidden="true">${TIER_EMOJI[L.tier]}</span>
-    <div><h2 class="h3">${t("lg.h", esc(name))}</h2><p class="muted small">${esc(planName(ctx, tool, plan))}</p></div>
-  </div>
-  <p class="lg-ends">${t("lg.ends", esc(fmtWhen(lang, week.end, s.tz)), leagueLeft(ctx, week.end - now))}</p>
+    return `<div class="lg-head"><span class="lg-badge" aria-hidden="true">${TIER_EMOJI[L.tier]}</span><div><h2 class="h3">${t("lg.h", esc(name))}</h2><p class="muted small">${t("lg.ends", esc(fmtWhen(lang, week.end, s.tz)), leagueLeft(ctx, week.end - now))}</p></div></div>
   ${last}
-  ${body}
-  <p class="muted small">${t("lg.rules")}</p>
+  ${body}`;
+  };
+  const tabs = data.leagues.length > 1
+    ? `<div class="lg-tabs" role="tablist">${data.leagues.map((L, i) => { const [tool, plan] = L.board.split(":"); return `<button type="button" role="tab" class="tab ${i ? "" : "on"}" aria-selected="${i ? "false" : "true"}" data-lg-tab="${i}">${esc(planName(ctx, tool, plan))}</button>`; }).join("")}</div>`
+    : "";
+  return `<section class="card league" id="league">
+  ${tabs}
+  ${data.leagues.map((L, i) => `<div data-lg-panel="${i}" ${i ? "hidden" : ""}>${panel(L)}</div>`).join("")}
 </section>`;
-  }).join("");
+}
+
+// フレンド (ダッシュボード): フォローしている人がいるときだけ、顔を横に並べた細い帯。リセット待ちの人を先に
+function friendsStrip(ctx, friends, now) {
+  if (!friends.length) return "";
+  const { user, t } = ctx;
+  const waitingOf = (s) => (s.todayResets ?? []).some((r) => r.passed && r.waiting && !r.rest);
+  const list = [...friends].sort((a, b) => waitingOf(b.s) - waitingOf(a.s) || b.s.weekXp - a.s.weekXp).map(({ u, s }) => `<li class="${waitingOf(s) ? "waiting" : s.todayDone ? "done" : ""}">
+      <a href="/@${esc(u.login)}">${u.avatar_url ? `<img src="${esc(u.avatar_url)}" alt="">` : `<span class="noav"></span>`}<span class="fs-name">@${esc(u.login)}</span><span class="fs-sub">🔥${s.streak}${waitingOf(s) ? " ⚡" : s.todayDone ? " ✓" : ""}</span></a>
+    </li>`).join("");
+  return `<section class="card friends-strip">
+  <div class="fs-head"><h2 class="h3">${t("fr.h")}</h2><a href="/@${esc(user.login)}#friends">${t("fr.all")}</a></div>
+  <ul class="fs-list">${list}</ul>
+</section>`;
 }
 
 // 「AI が書いた量」: トークン数を「150万」「1.5M」のように短く
@@ -374,7 +395,7 @@ function friendsCard(ctx, s, friends, flash, origin, now) {
   <ol class="board fr-list">${rows.map(row).join("")}</ol>
   ${friends.length ? "" : `<p class="muted small">${t("fr.empty")}</p>`}
   <form class="follow-form" method="post" action="/follow">
-    <input type="hidden" name="next" value="/me">
+    <input type="hidden" name="next" value="/@${esc(user.login)}">
     <label class="sr-only" for="fr-login">${t("fr.label")}</label>
     <input id="fr-login" name="login" placeholder="${esc(t("fr.placeholder"))}" required maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false">
     <button class="btn">${t("fr.follow")}</button>
@@ -648,12 +669,76 @@ function dial(ctx, tool, s, now) {
 </article>`;
 }
 
-export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = [], flash = null, leagues = null }) {
+// パソコンの連携 (連携していない人はダッシュボードにも出す)
+function setupCard(ctx, { origin, hasCli, last }) {
+  const { user, t } = ctx;
+  return `<section class="card ${hasCli ? "" : "attention"}" id="setup">
+  <h2 class="h3">${t(hasCli ? "setup.h.linked" : "setup.h.new")}</h2>
+  <p>${t(hasCli ? "setup.p.linked" : "setup.p.new")}</p>
+  <pre class="cmd"><code>curl -fsSL ${esc(origin)}/install.sh | sh</code><button class="copy" data-copy aria-label="${t("copy.cmd")}">${t("copy")}</button></pre>
+  ${planBadges(ctx, user) ? `<p class="plans">${t("setup.plans")} ${planBadges(ctx, user)}</p>` : ""}
+  <p class="muted small">${t("setup.note", last)}</p>
+</section>`;
+}
+
+const lastSync = (ctx) => (ctx.user.last_sync_at ? new Date(ctx.user.last_sync_at).toLocaleString(ctx.lang === "ja" ? "ja-JP" : "en-US", { timeZone: ctx.user.tz }) : null);
+
+// 設定: 通知・パソコンの連携・目標や言語などの設定・ログアウト
+export function settingsPage(ctx, { origin, vapidKey, hasCli, notify }) {
+  const { user, t, lang } = ctx;
+  const chk = (k) => `<label class="toggle"><input type="checkbox" name="notify.${k}" ${notify[k] ? "checked" : ""}><span>${t(`notify.${k}`)}</span></label>`;
+  return layout(ctx, {
+    title: t("settings.title"),
+    head: `<meta name="rw-vapid" content="${esc(vapidKey)}">`,
+    body: `
+<h1 class="h2 page-h">⚙️ ${t("settings.h")}</h1>
+<section class="card" id="notify">
+  <h2 class="h3">${t("push.h")}</h2>
+  <p class="muted" data-push-hint>${t("push.ios")}</p>
+  <div class="row">
+    <button class="btn" data-push-enable>${t("push.enable")}</button>
+    <button class="btn ghost" data-push-test hidden>${t("push.test")}</button>
+  </div>
+  <p class="status" data-push-status role="status"></p>
+</section>
+
+${setupCard(ctx, { origin, hasCli, last: lastSync(ctx) })}
+
+<section class="card" id="settings">
+  <h2 class="h3">${t("settings.general")}</h2>
+  <form class="settings" data-settings>
+    <label>${t("settings.goal")} <select name="goal">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((g) => `<option ${g === user.goal ? "selected" : ""}>${g}</option>`).join("")}</select> ${t("settings.goal.unit")}</label>
+    <label>${t("settings.remind")} <input type="time" name="remindAt" value="${esc(user.remind_at)}"></label>
+    <label>${t("settings.tz")} <input name="tz" value="${esc(user.tz)}" list="tzs"><datalist id="tzs" data-tz-list></datalist></label>
+    <label>${t("settings.lang")} <select name="lang"><option value="ja" ${lang === "ja" ? "selected" : ""}>日本語</option><option value="en" ${lang === "en" ? "selected" : ""}>English</option></select></label>
+    <fieldset><legend>${t("settings.notify")}</legend>
+      ${chk("hit")}
+      ${chk("soon")}
+      <label class="lead">${t("settings.lead")} <select name="notifyLead">${[1, 3, 5, 10, 15].map((n) => `<option value="${n}" ${n === (user.notify_lead ?? 5) ? "selected" : ""}>${t("settings.leadUnit", n)}</option>`).join("")}</select></label>
+      ${chk("reset")}
+      ${chk("late")}
+      ${chk("pinch")}
+      ${chk("goal")}
+      ${chk("league")}
+    </fieldset>
+    <label class="toggle"><input type="checkbox" name="statusline" ${user.claude_statusline ? "checked" : ""}><span>${t("settings.statusline")}<small class="hint">${t("settings.statusline.hint")}</small></span></label>
+    <label class="toggle"><input type="checkbox" name="public" ${user.public ? "checked" : ""}><span>${t("settings.public")}</span></label>
+    <div class="row"><button class="btn">${t("settings.save")}</button><span class="status" data-settings-status role="status"></span></div>
+  </form>
+</section>
+
+<section class="row share">
+  <a class="btn ghost" href="/welcome">${t("dash.redo")}</a>
+  <form method="post" action="/logout"><button class="btn ghost">${t("dash.logout")}</button></form>
+</section>`,
+  });
+}
+
+export function dashboard(ctx, s, { origin, vapidKey, hasCli, hasPush, friends = [], leagues = null }) {
   const { user, t, lang } = ctx;
   const now = Date.now();
   const left = Math.max(0, s.goal - s.todayCount);
-  const chk = (k) => `<label class="toggle"><input type="checkbox" name="notify.${k}" ${notify[k] ? "checked" : ""}><span>${t(`notify.${k}`)}</span></label>`;
-  const last = user.last_sync_at ? new Date(user.last_sync_at).toLocaleString(lang === "ja" ? "ja-JP" : "en-US", { timeZone: s.tz }) : null;
+  const last = lastSync(ctx);
   const tier = tierName(lang, s.tier);
   const record = s.todayIsRecord && s.todayCount > 1;
   return layout(ctx, {
@@ -710,62 +795,12 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
   ${dial(ctx, "codex", s, now)}
 </section>
 
+${hasCli ? "" : setupCard(ctx, { origin, hasCli, last })}
+${hasPush ? "" : `<a class="card nudge" href="/settings#notify"><span aria-hidden="true">📱</span><span><b>${t("dash.push.h")}</b><small>${t("dash.push.p")}</small></span><span class="chev-r" aria-hidden="true">›</span></a>`}
+
 ${leagueCards(ctx, leagues, s, now)}
 
-${friendsCard(ctx, s, friends, flash, origin, now)}
-
-<section class="card">
-  <h2 class="h3">${t("heat.h")}</h2>
-  ${heatmap(ctx, s)}
-  <p class="legend"><i class="cell l0"></i>0 <i class="cell l1"></i>${t("legend.under")} <i class="cell l2"></i>${t("legend.met")} <i class="cell l3"></i>${t("legend.over")} <i class="cell frozen"></i>${t("legend.frozen")} <i class="cell locked"></i>${t("legend.locked")}</p>
-</section>
-
-<section class="card" id="notify">
-  <h2 class="h3">${t("push.h")}</h2>
-  <p class="muted" data-push-hint>${t("push.ios")}</p>
-  <div class="row">
-    <button class="btn" data-push-enable>${t("push.enable")}</button>
-    <button class="btn ghost" data-push-test hidden>${t("push.test")}</button>
-  </div>
-  <p class="status" data-push-status role="status"></p>
-</section>
-
-<section class="card ${hasCli ? "" : "attention"}" id="setup">
-  <h2 class="h3">${t(hasCli ? "setup.h.linked" : "setup.h.new")}</h2>
-  <p>${t(hasCli ? "setup.p.linked" : "setup.p.new")}</p>
-  <pre class="cmd"><code>curl -fsSL ${esc(origin)}/install.sh | sh</code><button class="copy" data-copy aria-label="${t("copy.cmd")}">${t("copy")}</button></pre>
-  ${planBadges(ctx, user) ? `<p class="plans">${t("setup.plans")} ${planBadges(ctx, user)}</p>` : ""}
-  <p class="muted small">${t("setup.note", last)}</p>
-</section>
-
-<section class="card" id="settings">
-  <h2 class="h3">${t("settings.h")}</h2>
-  <form class="settings" data-settings>
-    <label>${t("settings.goal")} <select name="goal">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((g) => `<option ${g === s.goal ? "selected" : ""}>${g}</option>`).join("")}</select> ${t("settings.goal.unit")}</label>
-    <label>${t("settings.remind")} <input type="time" name="remindAt" value="${esc(user.remind_at)}"></label>
-    <label>${t("settings.tz")} <input name="tz" value="${esc(user.tz)}" list="tzs"><datalist id="tzs" data-tz-list></datalist></label>
-    <label>${t("settings.lang")} <select name="lang"><option value="ja" ${lang === "ja" ? "selected" : ""}>日本語</option><option value="en" ${lang === "en" ? "selected" : ""}>English</option></select></label>
-    <fieldset><legend>${t("settings.notify")}</legend>
-      ${chk("hit")}
-      ${chk("soon")}
-      <label class="lead">${t("settings.lead")} <select name="notifyLead">${[1, 3, 5, 10, 15].map((n) => `<option value="${n}" ${n === (user.notify_lead ?? 5) ? "selected" : ""}>${t("settings.leadUnit", n)}</option>`).join("")}</select></label>
-      ${chk("reset")}
-      ${chk("late")}
-      ${chk("pinch")}
-      ${chk("goal")}
-      ${chk("league")}
-    </fieldset>
-    <label class="toggle"><input type="checkbox" name="statusline" ${user.claude_statusline ? "checked" : ""}><span>${t("settings.statusline")}<small class="hint">${t("settings.statusline.hint")}</small></span></label>
-    <label class="toggle"><input type="checkbox" name="public" ${user.public ? "checked" : ""}><span>${t("settings.public")}</span></label>
-    <div class="row"><button class="btn">${t("settings.save")}</button><span class="status" data-settings-status role="status"></span></div>
-  </form>
-</section>
-
-<section class="row share">
-  <a class="btn ghost" href="/@${esc(user.login)}">${t("dash.profile")}</a>
-  <a class="btn ghost" href="/welcome">${t("dash.redo")}</a>
-  <form method="post" action="/logout"><button class="btn ghost">${t("dash.logout")}</button></form>
-</section>`,
+${friendsStrip(ctx, friends, now)}`,
   });
 }
 
@@ -837,7 +872,7 @@ export function welcome(ctx, { origin, vapidKey }) {
   });
 }
 
-// ---------- profile / leaderboard ----------
+// ---------- profile ----------
 // プロフィールの記録カード。日付は "2026-10-05" のような日のキー
 const fmtDay = (lang, k, withYear = false) => new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", {
   timeZone: "UTC", month: lang === "ja" ? "numeric" : "short", day: "numeric", ...(withYear ? { year: "numeric" } : {}),
@@ -905,7 +940,7 @@ export function profile(ctx, u, s, origin, social = {}) {
     ${(social.leagues ?? []).length ? `<p class="lg-tags">${social.leagues.map((l) => `<span class="lg-tag">${TIER_EMOJI[l.tier]} ${esc(t("lg.h", leagueName(lang, l.tier)))} <small>${l.tool === "claude" ? "Claude" : "Codex"}</small></span>`).join("")}</p>` : ""}</div>
   ${followBtn}
 </section>
-${social.flash === "added" ? `<p class="fr-flash" role="status">${t("fr.added", esc(u.login))} <a href="/me#friends">${t("fr.seeAll")}</a></p>` : ""}
+${social.flash === "added" && !self ? `<p class="fr-flash" role="status">${t("fr.added", esc(u.login))} <a href="/@${esc(viewer.login)}#friends">${t("fr.seeAll")}</a></p>` : ""}
 <section class="stats-row">
   <div class="stat flame">${statNum(s.streak)}<span>${t("stat.streak")}</span></div>
   <div class="stat">${statNum(s.bestStreak)}<span>${t("stat.best")}</span></div>
@@ -913,13 +948,14 @@ ${social.flash === "added" ? `<p class="fr-flash" role="status">${t("fr.added", 
   <div class="stat">${statNum(s.total)}<span>${t("stat.total")}</span></div>
   ${s.trophies ? `<div class="stat trophy">${statNum(s.trophies)}<span>${t("stat.trophies")}</span></div>` : ""}
 </section>
-${self && !u.public ? `<p class="private-note" role="status">🔒 ${t("p.private")} <a href="/me#settings">${t("p.private.link")}</a></p>` : ""}
+${self && !u.public ? `<p class="private-note" role="status">🔒 ${t("p.private")} <a href="/settings#settings">${t("p.private.link")}</a></p>` : ""}
 <section class="card">
   <h2 class="h3">${t("prof.today", s.todayCount)}${tier ? ` <span class="tier">${esc(tier)}</span>` : ""}</h2>
   ${todayTrack(ctx, s, Date.now())}
   ${heatmap(ctx, s)}
 </section>
 ${social.written != null ? tokenRoad(ctx, social.written) : ""}
+${self && social.friends ? friendsCard(ctx, s, social.friends, social.friendFlash, origin, Date.now()) : ""}
 ${social.ps ? profileRecords(ctx, s, social.ps) : ""}
 ${u.public ? `<section class="card share-card">
   <img src="/@${esc(u.login)}/card.png?lang=${lang}" alt="${esc(t("prof.cardAlt", u.login))}" width="600" height="315">
@@ -928,32 +964,6 @@ ${u.public ? `<section class="card share-card">
     <button class="btn ghost" data-copy-text="${esc(url)}">${t("prof.copyLink")}</button>
   </div>
 </section>` : ""}`,
-  });
-}
-
-export function leaderboard(ctx, boards, selected) {
-  const { user: viewer, t } = ctx;
-  const order = (k) => {
-    const [tool, plan] = k.split(":");
-    const ps = Object.keys(PLAN_NAMES[tool]);
-    return (tool === "claude" ? 0 : 100) + (ps.includes(plan) ? ps.indexOf(plan) : 50);
-  };
-  const keys = Object.keys(boards).sort((a, b) => order(a) - order(b));
-  // 見ている人自身のプランのボードを最初に開く
-  const mine = viewer ? keys.find((k) => k === `claude:${viewer.claude_plan}` || k === `codex:${viewer.codex_plan}`) : null;
-  const cur = keys.includes(selected) ? selected : mine ?? keys[0];
-  const name = (k) => { const [tool, p] = k.split(":"); return planName(ctx, tool, p); };
-  const rows = boards[cur] ?? [];
-  const tabs = keys.map((k) => `<a class="tab ${k === cur ? "on" : ""}" href="/leaderboard?board=${encodeURIComponent(k)}" ${k === cur ? 'aria-current="page"' : ""}>${esc(name(k))} <small>${boards[k].length}</small></a>`).join("");
-  const list = rows.length
-    ? rows.map((r, i) => `<li class="${viewer?.id === r.id ? "you" : ""}"><span class="rank">${i + 1}</span>${r.avatar_url ? `<img src="${esc(r.avatar_url)}" alt="">` : `<span class="noav"></span>`}<a href="/@${esc(r.login)}">@${esc(r.login)}</a><span class="fl">${t("windows", r.weekWindows)}</span><b>${r.weekXp.toLocaleString()} XP</b></li>`).join("")
-    : `<li class="empty">${t("board.empty")}</li>`;
-  return layout(ctx, {
-    title: t("board.title"),
-    body: `<section class="card"><h1 class="h2">${t("board.h")}</h1>
-<p class="muted">${t("board.p")}</p>
-${keys.length ? `<nav class="tabs" aria-label="${t("board.plans")}">${tabs}</nav>` : ""}
-<ol class="board">${list}</ol></section>`,
   });
 }
 

@@ -177,7 +177,7 @@ async function follow(req, env, user) {
     const u = new URL(safeNext(String(f.get("next") || "")), "https://x");
     u.searchParams.set("friend", result);
     u.searchParams.set("who", login.slice(0, 39));
-    return redirect(`${u.pathname}${u.search}${u.pathname === "/me" ? "#friends" : ""}`);
+    return redirect(`${u.pathname}${u.search}${u.pathname === `/@${user.login}` ? "#friends" : ""}`);
   };
   if (!/^[\w-]{1,39}$/.test(login)) return back("notfound");
   const target = await env.DB.prepare("SELECT id, public FROM users WHERE login = ?").bind(login).first();
@@ -625,32 +625,6 @@ async function meSummary(env, user) {
   };
 }
 
-// ---------- pages data ----------
-// ランキングはツール×課金プランごと (Pro と Max では 1枠の重さがまるで違うので混ぜない)。
-// 両方使う人は両方のボードに出て、それぞれそのツールの枠だけで数える。
-async function leaderboards(env, now = Date.now()) {
-  const { results } = await env.DB.prepare(
-    `SELECT u.id, u.login, u.name, u.avatar_url, u.tz, u.goal, u.claude_plan, u.codex_plan FROM users u
-     WHERE u.public = 1 AND (EXISTS (SELECT 1 FROM windows w WHERE w.user_id = u.id AND w.hit_at > ?)
-       OR EXISTS (SELECT 1 FROM weekly_hits h WHERE h.user_id = u.id AND h.hit_at > ?))`,
-  ).bind(now - 8 * DAY, now - 8 * DAY).all();
-  const boards = {};
-  for (const u of results) {
-    const [all, allWeekly] = await Promise.all([userWindows(env, u.id), userWeekly(env, u.id)]);
-    for (const tool of ["claude", "codex"]) {
-      const ws = all.filter((w) => w.tool === tool);
-      const weekly = allWeekly.filter((w) => w.tool === tool);
-      if (!ws.length && !weekly.length) continue;
-      const s = computeStats(ws, { tz: u.tz, goal: u.goal, now, weekly });
-      if (s.weekXp <= 0) continue;
-      const key = `${tool}:${u[`${tool}_plan`] || "unknown"}`;
-      (boards[key] ??= []).push({ ...u, weekXp: s.weekXp, weekWindows: Object.entries(s.days).filter(([k]) => k >= s.week).reduce((n, [, d]) => n + d.count, 0) });
-    }
-  }
-  for (const k of Object.keys(boards)) boards[k] = boards[k].sort((a, b) => b.weekXp - a.weekXp).slice(0, 100);
-  return boards;
-}
-
 // ---------- cron: 毎分 ----------
 async function runCron(env, now = Date.now()) {
   // 0) もうすぐリセット: リミット中の枠が、各自が選んだ分数 (1〜15分) 以内にリセットされる
@@ -787,7 +761,8 @@ async function route(req, env) {
   if (p === "/") {
     return html(pages.landing(ctx, origin));
   }
-  if (p === "/leaderboard") return html(pages.leaderboard(ctx, await leaderboards(env), url.searchParams.get("board")));
+  // ランキングはリーグに置きかえた
+  if (p === "/leaderboard") return redirect(user ? "/me" : "/", {}, 301);
 
   const prof = p.match(/^\/@([\w-]{1,39})(\/card\.(?:svg|png))?$/);
   if (prof) {
@@ -811,7 +786,12 @@ async function route(req, env) {
     const { results: lg } = await env.DB.prepare(
       "SELECT tool, tier, MAX(week) AS week FROM league_members WHERE user_id = ? GROUP BY tool",
     ).bind(u.id).all();
-    const social = { followers: followers.n, following: !!following, flash: url.searchParams.get("friend"), leagues: u.public ? lg : [] };
+    const self = user?.id === u.id;
+    const social = {
+      followers: followers.n, following: !!following, flash: url.searchParams.get("friend"), leagues: u.public ? lg : [],
+      // 自分のプロフィールには、フレンドの一覧とフォローの入力欄を出す
+      ...(self ? { friends: await friendsOf(env, u), friendFlash: { kind: url.searchParams.get("friend"), who: url.searchParams.get("who") } } : {}),
+    };
     const [{ s, p: ps }, written] = await Promise.all([profileData(env, u), writtenTotal(env, u.id)]);
     return html(pages.profile(ctx, u, s, origin, { ...social, ps, written }));
   }
@@ -835,9 +815,16 @@ async function route(req, env) {
     if (!user.onboarded_at) return redirect("/welcome");
     const hasCli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
     try { await syncLeagues(env, user); } catch (e) { console.log("league sync", e.message); }
-    const [s, friends, leagues] = await Promise.all([statsFor(env, user), friendsOf(env, user), leaguesFor(env, user)]);
-    const flash = { kind: url.searchParams.get("friend"), who: url.searchParams.get("who") };
-    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user), friends, flash, leagues }));
+    const [s, friends, leagues, push] = await Promise.all([
+      statsFor(env, user), friendsOf(env, user), leaguesFor(env, user),
+      env.DB.prepare("SELECT COUNT(*) AS n FROM push_subs WHERE user_id = ?").bind(user.id).first(),
+    ]);
+    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, hasPush: push.n > 0, friends, leagues }));
+  }
+  if (p === "/settings") {
+    if (!user) return redirect("/login?next=/settings");
+    const hasCli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
+    return html(pages.settingsPage(ctx, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user) }));
   }
   if (p.startsWith("/api/")) {
     if (!user) return json({ error: "unauthorized" }, 401);

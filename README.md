@@ -33,7 +33,7 @@ Cloudflare Workers + D1 (SQLite) · Web Push (RFC 8291 / VAPID を WebCrypto で
 
 - **日をまたぐ**: 目標の枠数を使い切った日が続くと 🔥ストリーク。7日ごとにフリーズ 🧊（最大2つ）がもらえて、未達の日を自動で守る。
 - **1日の中**: その日の何枠目かで XP が増えるコンボ（100 → 120 → 150 → 200 → 300）。称号は自分の目標が基準（あとn枠 / 目標達成 / 目標超え / 限界突破）で、届かない上限は見せない。リセットから5分以内の再開は +50 XP。「今日のトラック」は目標＋1マスだけを並べ、次のマスの XP と時刻を見せる。枠を使い切った瞬間にスマホへ「今日n枠目 +XP」を通知し、ダッシュボードを開くと増えた枠がポップして紙吹雪が出る。
-- **ランキング**: ツール×課金プランごと（Claude Pro / Max 5x / Max 20x / ChatGPT Plus / Pro …）。プランは CLI が `~/.claude.json` の `oauthAccount.organizationType` / `organizationRateLimitTier` と、Codex のログの `rate_limits.plan_type` から読む。両方使う人は両方のボードに、そのツールの枠だけで出る。
+- **リーグ**: ツール×課金プランごと（Claude Pro / Max 5x / Max 20x / ChatGPT Plus / Pro …）に最大30人で、1週間（月曜 0:00 UTC から）の XP を競う。上位は昇格、下位は降格（ブロンズ〜ダイヤモンドの10段）。プランは CLI が `~/.claude.json` の `oauthAccount.organizationType` / `organizationRateLimitTier` と、Codex のログの `rate_limits.plan_type` から読む。両方使う人は両方のリーグに、そのツールの枠だけで出る。
 - **週間リミット**: Claude Code（`quotaLimits.rateLimitType: seven_day*`）や Codex（10080分枠）の週間リミットを使い切ると 🏆 +1000 XP と「週間制覇」。リセットまでの日は5時間枠を使えないので、ストリークを自動で守る（フリーズは使わない）。
 - **オンボーディング** (`/welcome`): コマンドを貼る → 連携した瞬間に過去60日の記録（使い切った枠・平均の出遅れ・取りこぼした時間）を見せる → 「ふだんの1日」を目安に目標を自分で選ぶ → 通知を ON。
 
@@ -56,7 +56,7 @@ Cloudflare Workers + D1 (SQLite) · Web Push (RFC 8291 / VAPID を WebCrypto で
         │
         ▼
 [Cloudflare Worker + D1]  worker/
-        ├ 記録・ストリーク・フリーズ・XP・ランキング
+        ├ 記録・ストリーク・フリーズ・XP・リーグ
         ├ 毎分の Cron: リセット通知 / 10分出遅れ通知 / ピンチ通知
         └ Web Push (VAPID) → スマホ (PWA)
 ```
@@ -67,7 +67,7 @@ Cloudflare Workers + D1 (SQLite) · Web Push (RFC 8291 / VAPID を WebCrypto で
 | `worker/src/logic.js` | 集計（0時区切り・ストリーク・フリーズ・出遅れ・XP）と通知の文面 |
 | `worker/src/webpush.js` | WebCrypto だけで書いた Web Push（RFC 8291 / 8292） |
 | `worker/src/index.js` | API・GitHub ログイン・CLI のデバイスログイン・Cron |
-| `worker/src/pages.js` | サーバーで組み立てる HTML（LP・ダッシュボード・プロフィール・ランキング・シェアカード） |
+| `worker/src/pages.js` | サーバーで組み立てる HTML（LP・ダッシュボード・設定・プロフィール・シェアカード） |
 | `worker/public/` | CSS・クライアント JS・Service Worker・manifest・アイコン |
 
 ### 読み取っているログ
@@ -113,5 +113,5 @@ CLI をローカルのサーバーにつなぐ: `node cli/ratelimit-world.mjs se
 
 - iPhone で通知を受け取るには、Safari で「ホーム画面に追加」した PWA から通知を ON にする必要があります。
 - Codex の notify はターンが終わったときにしか呼ばれません。Codex だけでリミットに当たって手を止めた場合、送信は次のターン（または Claude Code の次のターン）まで遅れます。
-- 回数は各自の PC から送られるので、改ざんは防げません。ランキングは「楽しむためのもの」という前提です。
+- 回数は各自の PC から送られるので、改ざんは防げません。リーグは「楽しむためのもの」という前提です。
 - Windows は未対応（install.sh は macOS / Linux 用）。
