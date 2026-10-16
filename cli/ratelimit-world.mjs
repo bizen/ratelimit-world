@@ -238,6 +238,7 @@ const resetOf = (lim, ts) => (lim.resets_at != null ? epochMs(+lim.resets_at) : 
 
 export function scanCodex(sinceMs) {
   const hits = [], weekly = [], activity = [], usage = [];
+  const opened = new Map(); // 開けた枠: リセット時刻 (分単位に丸める) → 最大の使用率
   let current = null;
   for (const file of walkJsonl(path.join(codexDir(), "sessions"), sinceMs)) {
     let model = null; // そのターンのモデルは直前の turn_context に書かれる
@@ -262,6 +263,13 @@ export function scanCodex(sinceMs) {
           };
         }
         if (lim && reset && Number(lim.used_percent) >= 100) hits.push({ ts, reset });
+        if (lim && reset) {
+          const key = Math.round(reset / 60000);
+          const o = opened.get(key);
+          const pct = Number(lim.used_percent) || 0;
+          if (!o) opened.set(key, { resetAt: reset, peak: pct });
+          else o.peak = Math.max(o.peak, pct);
+        }
         if (wk && wreset && Number(wk.used_percent) >= 100) weekly.push({ ts, reset: wreset });
         // input_tokens はキャッシュ分を含み、output_tokens は推論分を含む (OpenAI の数え方)
         const u = p.info?.last_token_usage;
@@ -278,7 +286,14 @@ export function scanCodex(sinceMs) {
       }
     }
   }
-  return { hits, weekly, activity, current, usage };
+  // リセット時刻が数秒〜数十秒ぶれて同じ枠が分かれることがあるので、15分以内はまとめる
+  const merged = [];
+  for (const o of [...opened.values()].sort((a, b) => a.resetAt - b.resetAt)) {
+    const last = merged[merged.length - 1];
+    if (last && o.resetAt - last.resetAt < 15 * 60000) { last.peak = Math.max(last.peak, o.peak); last.resetAt = Math.max(last.resetAt, o.resetAt); }
+    else merged.push({ ...o });
+  }
+  return { hits, weekly, activity, current, usage, opened: merged };
 }
 
 // ---------- plan ----------
@@ -340,6 +355,35 @@ export function claudeWindowEnd(times, hits) {
   return { resetAt: end, exact };
 }
 
+// Claude Code の開けた枠をすべて割り出す (claudeWindowEnd と同じ考え方で、枠ごとに返す)
+export function claudeWindows(times, hits) {
+  const acts = [...times].sort((a, b) => a - b);
+  const resets = hits.map((h) => h.reset).sort((a, b) => a - b);
+  const out = [];
+  let end = -Infinity;
+  for (const t of acts) {
+    if (t < end) continue;
+    const r = resets.find((x) => x > t && x <= t + WINDOW_MS + 15 * 60000);
+    end = r ?? t + WINDOW_MS;
+    out.push({ resetAt: end, exact: !!r, peak: r ? 100 : null });
+  }
+  return out;
+}
+
+// 開けた枠の一覧 (使い切ったかどうかに関係なく)。Codex は正確、Claude Code は推定 (中継があれば今の枠は正確)
+function openedSessions(claude, codex, since) {
+  const now = Date.now();
+  const out = [];
+  for (const o of codex.opened) out.push({ tool: "codex", startAt: o.resetAt - WINDOW_MS, resetAt: o.resetAt, peakPct: o.peak, exact: true });
+  const cu = readJson(CLAUDE_USAGE_FILE, null);
+  for (const w of claudeWindows([...claude.activity, ...claude.usage.map((u) => u.ts)], claude.hits)) {
+    const relay = cu?.five && Math.abs(cu.five.resetAt - w.resetAt) < 2 * HOUR && cu.five.resetAt > now ? cu.five : null;
+    const resetAt = relay?.resetAt ?? w.resetAt;
+    out.push({ tool: "claude", startAt: resetAt - WINDOW_MS, resetAt, peakPct: w.peak ?? relay?.pct ?? null, exact: w.exact || !!relay });
+  }
+  return out.filter((o) => o.resetAt >= since);
+}
+
 // 週間リミットの到達はリセット時刻ごとに 1つ
 function toWeekly(tool, hits) {
   const out = [];
@@ -384,6 +428,7 @@ export function collect(days) {
     weeklyHits,
     plans: { claude: claudePlan(), codex: codex.current?.plan ?? null },
     nextReset: nextResets(claude, codex),
+    sessions: openedSessions(claude, codex, since),
   };
 }
 
