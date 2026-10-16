@@ -157,7 +157,8 @@ function weekStrip(ctx, s) {
     const count = s.days[k]?.count ?? 0;
     const met = count >= s.goal;
     const kind = met ? "met" : s.frozenDays.includes(k) ? "frozen" : s.lockedDays.includes(k) ? "locked" : i === 0 ? "pending" : "missed";
-    const icon = { met: "🔥", frozen: "🧊", locked: "🏆", pending: "", missed: "" }[kind];
+    // 丸の中はその日に使い切った枠の数。達成などは枠線の色で表す (光らせない)
+    const icon = count > 0 ? String(count) : "";
     const [y, m, d] = k.split("-").map(Number);
     const label = `${k}: ${t(`week.${kind}`)} (${t("windows", count)})`;
     out += `<li class="wd ${kind} ${i === 0 ? "today" : ""}" title="${esc(label)}" aria-label="${esc(label)}"><span class="dot">${icon}</span><small>${fmt.format(new Date(Date.UTC(y, m - 1, d)))}</small></li>`;
@@ -297,37 +298,40 @@ function dial(ctx, tool, s, now) {
     sub = t("dial.sub.idle");
   }
   const start = resetAt && state !== "weekly" ? resetAt - WINDOW_MS : null;
-  const R1 = 54, C1 = 2 * Math.PI * R1; // 外側: 時間
-  const R2 = 41, C2 = 2 * Math.PI * R2; // 内側: 使用率
-  const off = (c, f) => (c * (1 - Math.min(1, Math.max(0, f)))).toFixed(1);
-  let timeFrac = 0, lead = "";
-  if (start) {
-    const r = race(usedPct ?? 0, start, now);
-    timeFrac = r.elapsed / 100;
-    if (usedPct != null) {
-      lead = usedPct >= 100 ? t("c.maxed") : r.lead >= 0 ? t("c.lead", { n: r.lead }) : t("c.behind", { n: -r.lead });
-      if (state === "using") sub = r.maxAt ? t("c.paceMax", { t: localTime(r.maxAt, s.tz) }) : t("c.paceShort", { p: Math.min(100, r.pctAtReset) });
-    }
-  } else if (state === "weekly") timeFrac = 1;
+  const R = 52, C = 2 * Math.PI * R;
+  const off = (f) => (C * (1 - Math.min(1, Math.max(0, f)))).toFixed(1);
+  // 使用率が分かるとき: リング = 使用率、リング上の点 = 時間の経過 (塗りが点より先ならリード)。
+  // 分からないとき: リング = リセットまでの残り時間
   const raceOn = start != null && usedPct != null;
+  let frac = 0, elapsed = 0, ahead = true;
+  if (raceOn) {
+    const r = race(usedPct, start, now);
+    elapsed = r.elapsed / 100;
+    ahead = usedPct >= r.elapsed;
+    frac = usedPct / 100;
+    if (state === "using") sub = r.maxAt ? t("c.paceMax", { t: localTime(r.maxAt, s.tz) }) : t("c.paceShort", { p: Math.min(100, r.pctAtReset) });
+  } else if (resetAt) frac = Math.min(1, Math.max(0, (resetAt - now) / WINDOW_MS));
+  if (state === "weekly") frac = 1;
+  // 点の位置 (12時の位置から時計回り)
+  const ang = elapsed * 2 * Math.PI - Math.PI / 2;
+  const mx = (60 + R * Math.cos(ang)).toFixed(1), my = (60 + R * Math.sin(ang)).toFixed(1);
   return `
-<article class="dial tool-${tool} ${state} ${raceOn ? "race" : ""} ${raceOn && usedPct < 100 && lead && !lead.startsWith("+") ? "behind" : ""}" data-tool="${tool}" data-tz="${esc(s.tz)}"
+<article class="dial tool-${tool} ${state} ${raceOn ? (ahead ? "race ahead" : "race behind") : ""}" data-tool="${tool}" data-tz="${esc(s.tz)}"
   ${resetAt ? `data-reset="${resetAt}"` : ""} ${start ? `data-start="${start}"` : ""} ${usedPct != null ? `data-pct="${usedPct}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
   <h3>${TOOL_ICON[tool]}${TOOL_NAME[tool]}</h3>
-  <div class="ring" ${raceOn ? `role="img" aria-label="${esc(t("dial.raceAria", Math.round(usedPct), Math.round(timeFrac * 100)))}"` : ""}>
+  <div class="ring" ${raceOn ? `role="img" aria-label="${esc(t("dial.raceAria", Math.round(usedPct), Math.round(elapsed * 100)))}"` : ""}>
     <svg viewBox="0 0 120 120" aria-hidden="true">
-      <circle class="track time-track" cx="60" cy="60" r="${R1}"/>
-      <circle class="fill time" cx="60" cy="60" r="${R1}" stroke-dasharray="${C1.toFixed(1)}" stroke-dashoffset="${off(C1, timeFrac)}" data-c="${C1.toFixed(1)}"/>
-      ${raceOn ? `<circle class="track use-track" cx="60" cy="60" r="${R2}"/>
-      <circle class="fill use" cx="60" cy="60" r="${R2}" stroke-dasharray="${C2.toFixed(1)}" stroke-dashoffset="${off(C2, usedPct / 100)}"/>` : ""}
+      <circle class="track" cx="60" cy="60" r="${R}"/>
+      <circle class="fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off(frac)}" data-c="${C.toFixed(1)}"/>
+      ${raceOn && state === "using" ? `<circle class="marker" cx="${mx}" cy="${my}" r="5"/>` : ""}
     </svg>
     <div class="ring-text">
-      <small>${raceOn ? t("dial.usedPct", Math.round(usedPct)) : t(`dial.${state}`)}</small>
-      <b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b>
-      ${raceOn ? `<em class="lead">${esc(lead)}</em>` : ""}
+      ${raceOn
+        ? `<b class="pct">${Math.round(usedPct)}%</b><small class="left">${t("dial.left")} <span class="clock"></span></small>`
+        : `<small>${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b>`}
     </div>
   </div>
-  ${raceOn ? `<p class="race-legend"><i class="k-use"></i>${t("dial.usage")} <i class="k-time"></i>${t("dial.time")}</p>` : ""}
+  ${raceOn && state === "using" ? `<p class="race-legend" title="${esc(t("dial.markerHint"))}"><i class="k-time"></i>${t("dial.markerTime")}</p>` : ""}
   <p class="dial-sub">${esc(sub)}</p>
   ${dialFoot(ctx, tool, s, now, state === "limited" ? resetAt : null)}
 </article>`;

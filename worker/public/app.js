@@ -21,31 +21,32 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
         delete d.dataset.start;
         d.classList.add("ready");
         delete d.dataset.reset;
-        $(".ring-text small", d).textContent = T("c.ready");
-        clock.textContent = "GO";
+        $(".ring-text", d).innerHTML = `<small>${T("c.ready")}</small><b class="clock">GO</b>`;
         continue;
       }
       const h = Math.floor(left / 3600000), m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;
       // 週間リミットのように 1日以上先なら「3日 13時間」で見せる
       clock.textContent = h >= 24 ? T("c.days", { d: Math.floor(h / 24), h: h % 24 }) : `${h}:${pad(m)}:${pad(s)}`;
-      // 外側の線 = 枠の経過時間。使用率が分かれば、時間との差 (リード/遅れ) とペースの予測も更新する
-      if (d.dataset.start) {
-        const start = +d.dataset.start;
+      // 使用率が分かるとき: 点 = 時間の経過。塗り (使用率) が点より先なら ahead
+      if (d.dataset.start && d.dataset.pct) {
+        const start = +d.dataset.start, pct = +d.dataset.pct;
         const elapsed = Math.min(1, Math.max(0, (now - start) / WINDOW_MS));
-        const time = $(".fill.time", d);
-        time.style.strokeDashoffset = (+time.dataset.c * (1 - elapsed)).toFixed(1);
-        if (d.dataset.pct) {
-          const pct = +d.dataset.pct;
-          const lead = Math.round(pct - elapsed * 100);
-          const el = $(".lead", d);
-          if (el) el.textContent = pct >= 100 ? T("c.maxed") : lead >= 0 ? T("c.lead", { n: lead }) : T("c.behind", { n: -lead });
-          d.classList.toggle("behind", pct < 100 && lead < 0);
-          if (d.classList.contains("using") && pct > 0) {
-            const at = start + ((now - start) * 100) / pct;
-            const hm = (ms) => new Intl.DateTimeFormat("en-GB", { timeZone: d.dataset.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
-            $(".dial-sub", d).textContent = at <= reset ? T("c.paceMax", { t: hm(at) }) : T("c.paceShort", { p: Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
-          }
+        const mk = $(".marker", d);
+        if (mk) {
+          const a = elapsed * 2 * Math.PI - Math.PI / 2;
+          mk.setAttribute("cx", (60 + 52 * Math.cos(a)).toFixed(1));
+          mk.setAttribute("cy", (60 + 52 * Math.sin(a)).toFixed(1));
         }
+        d.classList.toggle("ahead", pct >= elapsed * 100);
+        d.classList.toggle("behind", pct < elapsed * 100);
+        if (d.classList.contains("using") && pct > 0) {
+          const at = start + ((now - start) * 100) / pct;
+          const hm = (ms) => new Intl.DateTimeFormat("en-GB", { timeZone: d.dataset.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
+          $(".dial-sub", d).textContent = at <= reset ? T("c.paceMax", { t: hm(at) }) : T("c.paceShort", { p: Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
+        }
+      } else if (d.classList.contains("limited") || d.classList.contains("using")) {
+        const fill = $(".fill", d);
+        fill.style.strokeDashoffset = (+fill.dataset.c * (1 - Math.min(1, left / WINDOW_MS))).toFixed(1);
       }
     }
     for (const d of $$(".dial.ready[data-since]")) {

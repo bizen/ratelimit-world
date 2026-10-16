@@ -423,32 +423,18 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .toggle .hint { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }
 .settings .toggle { align-items: flex-start; }
 
-/* リング: 外側の細い線が「時間」、内側の太い線が「使用率」。使用率が時間より前ならリード */
-.ring circle.time-track, .ring circle.time { stroke-width: 7; }
-.ring circle.use-track, .ring circle.use { stroke-width: 13; }
-.dial.race .ring circle.time { stroke: var(--muted); opacity: .6; }
-.dial.race .ring circle.use { stroke: var(--violet); }
-.ring .lead { font: 700 11px var(--mono); font-style: normal; color: var(--go); margin-top: 1px; }
-.dial.behind .ring .lead { color: var(--ember); }
-.race-legend { display: flex; justify-content: center; align-items: center; gap: 4px 6px; margin: 6px 0 0; font-size: 10.5px; font-weight: 700; opacity: .8; }
-.race-legend i { display: inline-block; width: 10px; height: 4px; border-radius: 2px; margin-left: 6px; }
-.race-legend .k-use { height: 6px; background: var(--violet); }
-.race-legend .k-time { background: var(--muted); }
-/* ツールの色に合わせる */
-.dial.tool-claude.race .ring circle.use { stroke: #fff; }
-.dial.tool-claude.race .ring circle.time { stroke: #FBD9C7; opacity: .9; }
-.dial.tool-claude .ring circle.use-track { stroke: rgb(255 255 255 / .22); }
-.dial.tool-claude .lead { color: #fff; }
-.dial.tool-claude.behind .lead { color: #FFE2A8; }
-.dial.tool-claude .race-legend .k-use { background: #fff; }
-.dial.tool-claude .race-legend .k-time { background: #FBD9C7; }
-.dial.tool-codex.race .ring circle.use { stroke: #0D0D0D; }
-.dial.tool-codex.race .ring circle.time { stroke: #9A9A9A; }
-.dial.tool-codex .ring circle.use-track { stroke: #F1F1F1; }
-.dial.tool-codex .lead { color: #12804A; }
-.dial.tool-codex.behind .lead { color: #C2410C; }
-.dial.tool-codex .race-legend .k-use { background: #0D0D0D; }
-.dial.tool-codex .race-legend .k-time { background: #9A9A9A; }
+/* リング = 使用率、リング上の点 = 時間の経過。塗りが点より先ならリード */
+.ring .pct { font: 400 clamp(26px, 7.4vw, 34px)/1 var(--display); }
+.ring .left { font: 700 12px var(--mono); color: inherit; opacity: .8; margin-top: 4px; }
+.ring .left .clock { font: inherit; }
+.ring circle.marker { fill: var(--surface); stroke: var(--ink); stroke-width: 3; }
+.dial.race.behind .pct { color: var(--ember); }
+.race-legend { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 6px 0 0; font-size: 10.5px; font-weight: 700; opacity: .8; }
+.race-legend .k-time { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 2.5px solid currentColor; }
+.dial.tool-claude .ring circle.marker { fill: #D97757; stroke: #fff; }
+.dial.tool-claude.race.behind .pct { color: #FFE2A8; }
+.dial.tool-codex .ring circle.marker { fill: #fff; stroke: #0D0D0D; }
+.dial.tool-codex.race.behind .pct { color: #C2410C; }
 .dial { padding-left: 10px; padding-right: 10px; }
 .dial-foot { margin-left: -10px; margin-right: -10px; padding-left: 12px; padding-right: 12px; }
 
@@ -460,11 +446,12 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 /* 直近7日のストリーク (丸の列) */
 .week-strip { list-style: none; display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; padding: 12px 14px; margin: 10px 0 0; background: var(--surface); border: 2px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
 .wd { display: grid; justify-items: center; gap: 4px; }
-.wd .dot { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; background: var(--paper); border: 2px solid var(--line); }
+.wd .dot { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: 700 14px var(--mono); color: var(--ink); background: var(--surface); border: 2px solid var(--line); }
 .wd small { font-size: 11px; font-weight: 700; color: var(--muted); }
-.wd.met .dot { background: var(--ember-soft); border-color: var(--ember); }
-.wd.frozen .dot { background: var(--ice-soft); border-color: var(--ice); }
-.wd.locked .dot { background: color-mix(in srgb, #FFC53D 25%, var(--surface)); border-color: #E8B931; }
-.wd.missed .dot { background: var(--paper); border-style: dashed; }
-.wd.today .dot { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--violet); }
+/* 達成は枠線で表す (中は光らせない) */
+.wd.met .dot { border: 3px solid var(--ember); }
+.wd.frozen .dot { border: 3px solid var(--ice); }
+.wd.locked .dot { border: 3px solid #E8B931; }
+.wd.missed .dot { border-style: dashed; color: var(--muted); }
+.wd.today .dot { outline: 2px solid var(--violet); outline-offset: 2px; }
 .wd.today small { color: var(--violet); }
