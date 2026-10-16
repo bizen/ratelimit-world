@@ -22,6 +22,9 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
         d.classList.add("ready");
         delete d.dataset.reset;
         $(".ring-text", d).innerHTML = `<small>${T("c.ready")}</small><b class="clock">GO</b>`;
+        // 箱も「今すぐ再開！」に (落ち着いた色)
+        const box = $(".pace", d);
+        if (box) { box.className = "pace neutral"; box.removeAttribute("data-pace"); $("b", box).textContent = T("c.ready"); }
         continue;
       }
       const h = Math.floor(left / 3600000), m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;

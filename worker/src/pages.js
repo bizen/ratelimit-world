@@ -332,29 +332,30 @@ function dial(ctx, tool, s, now) {
   const x = s.tools[tool];
   const last = s.lastReset[tool];
   const lock = s.weeklyLocks.find((w) => w.tool === tool);
-  let state, resetAt = null, sub, usedPct = null;
+  // リングの下の箱 (どの状態でも同じ大きさ)。ペースが分かるときだけ緑/赤、それ以外は落ち着いた色
+  let state, resetAt = null, usedPct = null, box;
   if (lock) {
     state = "weekly";
     resetAt = lock.resetAt;
-    sub = t("dial.sub.weekly", fmtWhen(lang, lock.resetAt, s.tz));
+    box = { title: t("box.weekly"), detail: t("box.until", fmtWhen(lang, lock.resetAt, s.tz)) };
   } else if (x?.state === "limited") {
     state = "limited";
     resetAt = x.resetAt;
     usedPct = 100;
-    sub = t("dial.sub.limited", localTime(x.resetAt, s.tz));
+    box = { title: t("box.limited"), detail: t("box.resetAt", localTime(x.resetAt, s.tz)) };
   } else if (s.nextReset?.[tool]?.resetAt > now) {
     // 使用中 (中継オフの Claude Code はリセット時刻が推定で、使用率は不明)
     const r = s.nextReset[tool];
     state = "using";
     resetAt = r.resetAt;
     usedPct = r.pct ?? null;
-    sub = t(r.exact ? "dial.sub.using" : "dial.sub.usingEst", localTime(r.resetAt, s.tz));
+    box = { title: t("box.using"), detail: t(r.exact ? "box.resetAt" : "box.resetAbout", localTime(r.resetAt, s.tz)) };
   } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
     state = "ready";
-    sub = t("dial.sub.ready", localTime(last.reset_at, s.tz));
+    box = { title: t("dial.ready"), detail: t("box.resetDone", localTime(last.reset_at, s.tz)) };
   } else {
     state = "idle";
-    sub = t("dial.sub.idle");
+    box = { title: t("dial.idle"), detail: t("box.idle") };
   }
   const start = resetAt && state !== "weekly" ? resetAt - WINDOW_MS : null;
   const R = 52, C = 2 * Math.PI * R;
@@ -362,13 +363,15 @@ function dial(ctx, tool, s, now) {
   // 使用率が分かるとき: リング = 使用率。間に合うペースかどうかは下の一文で伝える (緑 = 間に合う / オレンジ = 余る)。
   // 分からないとき: リング = リセットまでの残り時間
   const raceOn = start != null && usedPct != null;
-  let frac = 0, elapsed = 0, ahead = true, pace = null;
+  let frac = 0, elapsed = 0, ahead = true;
   if (raceOn) {
     const r = race(usedPct, start, now);
     elapsed = r.elapsed / 100;
     ahead = usedPct >= r.elapsed;
     frac = usedPct / 100;
-    if (state === "using") pace = r.maxAt ? { ok: true, detail: t("c.paceMaxAt", { t: localTime(r.maxAt, s.tz) }) } : { ok: false, detail: t("c.paceShortAt", { p: Math.min(100, r.pctAtReset) }) };
+    if (state === "using") box = r.maxAt
+      ? { kind: "ok", title: t("c.paceOk"), detail: t("c.paceMaxAt", { t: localTime(r.maxAt, s.tz) }) }
+      : { kind: "short", title: t("c.paceBad"), detail: t("c.paceShortAt", { p: Math.min(100, r.pctAtReset) }) };
   } else if (resetAt) frac = Math.min(1, Math.max(0, (resetAt - now) / WINDOW_MS));
   if (state === "weekly") frac = 1;
   return `
@@ -386,9 +389,7 @@ function dial(ctx, tool, s, now) {
         : `<small>${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b>`}
     </div>
   </div>
-  ${pace
-    ? `<div class="pace ${pace.ok ? "ok" : "short"}" data-pace><b>${t(pace.ok ? "c.paceOk" : "c.paceBad")}</b><span>${esc(pace.detail)}</span></div>`
-    : `<p class="dial-sub">${esc(sub)}</p>`}
+  <div class="pace ${box.kind ?? "neutral"}" ${box.kind ? "data-pace" : ""}><b>${esc(box.title)}</b><span>${esc(box.detail)}</span></div>
   ${dialFoot(ctx, tool, s, now, state === "limited" ? resetAt : null)}
 </article>`;
 }

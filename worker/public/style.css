@@ -543,11 +543,29 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .dial.tool-claude .pace { border: 2px solid rgb(255 255 255 / .55); }
 .pace b, .pace span { white-space: nowrap; }
 
-/* ストリークの帯: 続けて達成した日の丸を、ひとつながりの帯で囲む */
+/* ストリークの帯: 続けて達成した日を、丸と同じ高さの淡いオレンジの帯 1本でつなぐ (枠線なし)。
+   帯の中の日は丸の枠線を消し、数字だけをオレンジで出す */
+.week-strip { padding-inline: max(14px, calc((100% - 420px) / 2)); }
 .wd { position: relative; }
 .wd .dot { position: relative; z-index: 1; }
-.wd[class*="run-"]::before { content: ""; position: absolute; top: -4px; height: 42px; background: var(--ember-soft); border: 2px solid color-mix(in srgb, var(--ember) 45%, transparent); border-left: 0; border-right: 0; z-index: 0; }
-.wd.run-mid::before { left: -4px; right: -4px; }
-.wd.run-start::before { left: calc(50% - 21px); right: -4px; border-left: 2px solid color-mix(in srgb, var(--ember) 45%, transparent); border-radius: 21px 0 0 21px; }
-.wd.run-end::before { left: -4px; right: calc(50% - 21px); border-right: 2px solid color-mix(in srgb, var(--ember) 45%, transparent); border-radius: 0 21px 21px 0; }
-.wd.today.pending.run-end .dot { border-style: dashed; border-color: var(--ember); }
+.wd[class*="run-"]::before { content: ""; position: absolute; top: 0; height: 34px; background: color-mix(in srgb, var(--ember) 18%, transparent); z-index: 0; }
+.wd.run-mid::before { left: -3px; right: -3px; }
+.wd.run-start::before { left: calc(50% - 17px); right: -3px; border-radius: 17px 0 0 17px; }
+.wd.run-end::before { left: -3px; right: calc(50% - 17px); border-radius: 0 17px 17px 0; }
+.wd[class*="run-"] .dot { background: transparent; border-color: transparent; color: var(--ember); font-size: 15px; }
+.wd[class*="run-"].frozen .dot { color: var(--ice); }
+.wd[class*="run-"].locked .dot { color: #C98A00; }
+/* 今日がまだで帯の端にいるとき: 点線の丸で「ここを埋めれば伸びる」 */
+.wd.today.pending[class*="run-"] .dot { border: 2px dashed var(--ember); }
+.wd.today .dot { outline-offset: 3px; }
+
+/* リングの下の箱: どの状態でも同じ大きさ (横いっぱい・高さ固定・2行)。色付きはペース (緑/赤) だけ */
+.pace { box-sizing: border-box; width: auto; height: 54px; margin: 10px 2px 0; align-content: center; }
+.pace b, .pace span { overflow: hidden; text-overflow: ellipsis; }
+.pace.neutral { box-shadow: none; }
+.dial.tool-claude .pace.neutral { background: rgb(255 255 255 / .16); color: #fff; }
+.dial.tool-codex .pace.neutral { background: #F3F3F3; color: #333; border: 0; }
+.dial.tool-codex .pace.neutral span { opacity: .75; }
+/* 今日の印は曜日の文字 (紫) だけ。丸に二重の線は付けない */
+.wd.today .dot { outline: none; }
+.wd.today.pending:not([class*="run-"]) .dot { border: 2px dashed var(--violet); }
