@@ -651,7 +651,7 @@ function statusSegment(liveClaude) {
     if (!t || t.state === "idle") continue;
     if (t.state === "ready") parts.push(`${NAMES[tool]} ⚡GO`);
     else if (t.state === "weekly") parts.push(`${NAMES[tool]} 🏆${dur(t.resetAt - st.now)}`);
-    else parts.push(`${NAMES[tool]}${t.pct != null ? ` ${Math.round(t.pct)}%` : ""} ⏳${t.exact === false ? "~" : ""}${dur(t.resetAt - st.now)}`);
+    else parts.push(`${NAMES[tool]}${t.pct != null ? ` ${L("残", "")}${100 - Math.round(t.pct)}%` : ""} ⏳${t.exact === false ? "~" : ""}${dur(t.resetAt - st.now)}`);
   }
   return parts.join(" · ");
 }
@@ -671,7 +671,7 @@ function menubar() {
   const lines = [title, "---", L(`🔥 ${st.streak}日連続 · 今日 ${st.today}/${st.goal} 枠`, `🔥 ${st.streak}-day streak · today ${st.today}/${st.goal}`)];
   for (const [tool, t] of tools) {
     const name = tool === "claude" ? "Claude Code" : "Codex";
-    const pct = t.pct != null ? ` ${Math.round(t.pct)}%` : "";
+    const pct = t.pct != null ? ` ${L(`残り ${100 - Math.round(t.pct)}%`, `${100 - Math.round(t.pct)}% left`)}` : "";
     if (t.state === "ready") lines.push(L(`${name}  ⚡ リセット済み — 今すぐ再開`, `${name}  ⚡ reset — restart now`) + " | color=#16A34A");
     else if (t.state === "weekly") lines.push(L(`${name}  🏆 週間リミット中（${new Date(t.resetAt).toLocaleString()} まで）`, `${name}  🏆 weekly limit (until ${new Date(t.resetAt).toLocaleString()})`));
     else if (t.state === "idle") lines.push(L(`${name}  待機中`, `${name}  idle`));

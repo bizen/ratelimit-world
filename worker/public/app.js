@@ -42,7 +42,7 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
             box.classList.toggle("ok", ok);
             box.classList.toggle("short", !ok);
             $("b", box).textContent = T(ok ? "c.paceOk" : "c.paceBad");
-            $("span", box).textContent = ok ? T("c.paceMaxAt", { t: hm(at) }) : T("c.paceShortAt", { p: Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
+            $("span", box).textContent = ok ? T("c.paceMaxAt", { t: hm(at) }) : T("c.paceShortAt", { p: 100 - Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
           }
         }
       } else if (d.classList.contains("limited") || d.classList.contains("using")) {

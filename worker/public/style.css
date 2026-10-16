@@ -427,6 +427,7 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 /* リング = 使用率、リング上の点 = 時間の経過。塗りが点より先ならリード */
 .ring .pct { font: 400 clamp(26px, 7.4vw, 34px)/1 var(--display); }
 .ring .left { font: 700 12px var(--mono); color: inherit; opacity: .8; margin-top: 4px; }
+.ring .remain { font-size: 11px; margin-bottom: 2px; }
 .ring .left .clock { font: inherit; }
 .dial.tool-claude .dial.tool-codex .dial { padding-left: 10px; padding-right: 10px; }
 .dial-foot { margin-left: -10px; margin-right: -10px; padding-left: 12px; padding-right: 12px; }

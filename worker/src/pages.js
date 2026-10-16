@@ -283,7 +283,7 @@ function todayTrack(ctx, s, now) {
 }
 
 // 次に使い切る枠: どちらのツールで達成するかはまだ分からないので、上下 2段に分けて
-// それぞれの今の使用率を出す。使い切りやすい方 (使用率が高い方) を上、リミット中で使えない方は下
+// それぞれの今の残量 (リセット直後が 100%、使い切ると 0%) を出す。使い切りやすい方 (残量が少ない方) を上、リミット中で使えない方は下
 function nextSlot(ctx, s, now, i, goalMark, nextLabel) {
   const halves = ["claude", "codex"].map((tool) => {
     const lim = s.tools[tool]?.state === "limited" && s.tools[tool].resetAt > now ? s.tools[tool].resetAt : null;
@@ -294,9 +294,9 @@ function nextSlot(ctx, s, now, i, goalMark, nextLabel) {
   // 並び: 使えるもの (使用率が高い順) → 使用率不明 → リミット中
   const rank = (h) => (h.lim ? -2 : h.pct == null ? -1 : h.pct);
   halves.sort((a, b) => rank(b) - rank(a));
-  const half = (h) => `<div class="half tool-${h.tool} ${h.lim ? "locked" : ""}" style="--p:${h.pct ?? 0}%">
+  const half = (h) => `<div class="half tool-${h.tool} ${h.lim ? "locked" : ""}" style="--p:${h.pct == null ? 0 : 100 - h.pct}%">
       <span class="tool">${h.tool === "claude" ? "Claude" : "Codex"}</span>
-      <b>${h.lim ? ctx.t("slot.at", localTime(h.lim, s.tz)) : h.pct == null ? "—" : `${Math.round(h.pct)}%`}</b>
+      <b>${h.lim ? ctx.t("slot.at", localTime(h.lim, s.tz)) : h.pct == null ? "—" : `${100 - Math.round(h.pct)}%`}</b>
     </div>`;
   return `<li class="slot next split${goalMark}" style="--i:${i}" title="${esc(nextLabel)} · +${comboXp(i)} XP">${halves.map(half).join("")}</li>`;
 }
@@ -334,7 +334,7 @@ function heatmap(ctx, s, days = 28) {
 
 // ダイヤルの下の欄。両方のダイヤルで同じマス目 (2列×3行) にして、高さをそろえる:
 //   枠の開始 | 次のリセット
-//   昨日     | 週間枠の使用率
+//   昨日     | 週間枠の残量
 //   最後に使い切った (横いっぱい)
 // 値がないマスは「—」にして、マスの数は変えない
 const shortWhen = (lang, ms, tz) => new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", {
@@ -352,7 +352,7 @@ function dialFoot(ctx, tool, s, now, limitedAt) {
   const active = r?.resetAt > now;
   const est = active && !r.exact ? `<small>${t("dial.estimated")}</small>` : "";
   const w = s.nextReset?.[tool]?.week;
-  const week = w?.resetAt > now ? `${Math.round(w.pct)}%<small>${t("dial.weekReset", shortDay(lang, w.resetAt, s.tz))}</small>` : dash;
+  const week = w?.resetAt > now ? `${100 - Math.round(w.pct)}%<small>${t("dial.weekReset", shortDay(lang, w.resetAt, s.tz))}</small>` : dash;
   const last = s.lastHitByTool[tool];
   const lastText = last
     ? `${ago(ctx, now - last)}<small>${last < now - 20 * 3600 * 1000 ? shortWhen(lang, last, s.tz) : localTime(last, s.tz)}</small>`
@@ -411,7 +411,7 @@ function dial(ctx, tool, s, now) {
   const start = resetAt && state !== "weekly" ? resetAt - WINDOW_MS : null;
   const R = 52, C = 2 * Math.PI * R;
   const off = (f) => (C * (1 - Math.min(1, Math.max(0, f)))).toFixed(1);
-  // 使用率が分かるとき: リング = 使用率。間に合うペースかどうかは下の一文で伝える (緑 = 間に合う / オレンジ = 余る)。
+  // 使用率が分かるとき: リング = 残量 (リセット直後が満タンで、使うほど減る)。間に合うペースかどうかは下の一文で伝える (緑 = 間に合う / オレンジ = 余る)。
   // 分からないとき: リング = リセットまでの残り時間
   const raceOn = start != null && usedPct != null;
   let frac = 0, elapsed = 0, ahead = true;
@@ -419,24 +419,24 @@ function dial(ctx, tool, s, now) {
     const r = race(usedPct, start, now);
     elapsed = r.elapsed / 100;
     ahead = usedPct >= r.elapsed;
-    frac = usedPct / 100;
+    frac = 1 - usedPct / 100;
     if (state === "using") box = r.maxAt
       ? { kind: "ok", title: t("c.paceOk"), detail: t("c.paceMaxAt", { t: localTime(r.maxAt, s.tz) }) }
-      : { kind: "short", title: t("c.paceBad"), detail: t("c.paceShortAt", { p: Math.min(100, r.pctAtReset) }) };
+      : { kind: "short", title: t("c.paceBad"), detail: t("c.paceShortAt", { p: 100 - Math.min(100, r.pctAtReset) }) };
   } else if (resetAt) frac = Math.min(1, Math.max(0, (resetAt - now) / WINDOW_MS));
   if (state === "weekly") frac = 1;
   return `
 <article class="dial tool-${tool} ${state} ${raceOn ? (ahead ? "race ahead" : "race behind") : ""}" data-tool="${tool}" data-tz="${esc(s.tz)}"
   ${resetAt ? `data-reset="${resetAt}"` : ""} ${start ? `data-start="${start}"` : ""} ${usedPct != null ? `data-pct="${usedPct}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
   <h3>${TOOL_ICON[tool]}${TOOL_NAME[tool]}</h3>
-  <div class="ring" ${raceOn ? `role="img" aria-label="${esc(t("dial.raceAria", Math.round(usedPct), Math.round(elapsed * 100)))}"` : ""}>
+  <div class="ring" ${raceOn ? `role="img" aria-label="${esc(t("dial.raceAria", 100 - Math.round(usedPct), Math.round(elapsed * 100)))}"` : ""}>
     <svg viewBox="0 0 120 120" aria-hidden="true">
       <circle class="track" cx="60" cy="60" r="${R}"/>
       <circle class="fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off(frac)}" data-c="${C.toFixed(1)}"/>
     </svg>
     <div class="ring-text">
       ${raceOn
-        ? `<b class="pct">${Math.round(usedPct)}%</b><small class="left">${t("dial.left")} <span class="clock"></span></small>`
+        ? `<small class="remain">${t("dial.remain")}</small><b class="pct">${100 - Math.round(usedPct)}%</b><small class="left">${t("dial.left")} <span class="clock"></span></small>`
         : `<small>${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b>`}
     </div>
   </div>
