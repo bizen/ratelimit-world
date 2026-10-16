@@ -174,11 +174,21 @@ function ago(ctx, ms) {
   return h < 24 ? ctx.t("ago.hour", h) : ctx.t("ago.day", Math.floor(h / 24));
 }
 
-const nextLimited = (s) => Object.values(s.tools).map((x) => x.resetAt).sort((a, b) => a - b)[0];
+// 次に新しい枠を開けられる時刻。どれかのツールに今の枠がなければ「今すぐ」(null)。
+// 全ツールが使用中かリミット中なら、いちばん早いリセット時刻
+function nextOpenAt(s, now) {
+  const ends = ["claude", "codex"].map((tool) => {
+    const lim = s.tools[tool]?.resetAt;
+    const use = s.nextReset?.[tool]?.resetAt;
+    const end = Math.max(lim > now ? lim : 0, use > now ? use : 0);
+    return end || null;
+  });
+  return ends.some((e) => e == null) ? null : Math.min(...ends);
+}
 
 function nextWindowText(ctx, s, now) {
-  const limited = nextLimited(s);
-  return limited && limited > now ? ctx.t("today.nextAt", localTime(limited, s.tz)) : ctx.t("today.nextNow");
+  const at = nextOpenAt(s, now);
+  return at ? ctx.t("today.nextAt", localTime(at, s.tz)) : ctx.t("today.nextNow");
 }
 
 // 今日のトラック: 1マス = 1枠。開けた枠を時刻順に並べ、状態で塗り分ける
@@ -201,9 +211,8 @@ function todayTrack(ctx, s, now) {
     }
   }
   // 次に開ける枠: どれかのツールがリセット済みなら今すぐ、全部リミット中なら一番早いリセットから
-  const limited = nextLimited(s);
-  const anyFree = ["claude", "codex"].some((tool) => !s.tools[tool]);
-  const nextLabel = anyFree || !limited ? t("slot.now") : t("slot.at", localTime(limited, s.tz));
+  const at = nextOpenAt(s, now);
+  const nextLabel = at ? t("slot.at", localTime(at, s.tz)) : t("slot.now");
   const base = s.todayCount + s.todayOpened.filter((o) => o.status === "active").length;
   for (let k = 1; k <= 10; k++) {
     const n = base + k;
