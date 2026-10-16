@@ -1,0 +1,17 @@
+{
+  "name": "ratelimit-world-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "copy-cli": "cp ../cli/ratelimit-world.mjs public/cli.mjs",
+    "dev": "npm run copy-cli && wrangler dev",
+    "deploy": "npm run copy-cli && wrangler deploy",
+    "db:local": "wrangler d1 execute ratelimit-world --local --file=schema.sql",
+    "db:remote": "wrangler d1 execute ratelimit-world --remote --file=schema.sql",
+    "vapid": "node scripts/vapid-keys.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.147.0"
+  }
+}

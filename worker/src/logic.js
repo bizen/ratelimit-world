@@ -1,0 +1,194 @@
+// 集計ロジック (D1 にも Workers にも依存しない純粋な関数。test/ から直接テストする)
+
+export const MIN = 60 * 1000;
+export const HOUR = 60 * MIN;
+export const DAY = 24 * HOUR;
+export const WINDOW_MS = 5 * HOUR;
+export const QUICK_MS = 5 * MIN;        // これ以内に再開したら「即スタート」
+export const CHASE_MS = 3 * HOUR;       // これより後の再開は出遅れではなく休憩とみなす
+export const MAX_FREEZES = 2;
+export const FREEZE_EVERY = 7;          // 7日連続ごとにフリーズを 1つもらえる
+
+export const TOOL_NAME = { claude: "Claude Code", codex: "Codex" };
+
+export function validTz(tz) {
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
+}
+
+const partsCache = new Map();
+function fmt(tz, opts) {
+  const k = tz + JSON.stringify(opts);
+  let f = partsCache.get(k);
+  if (!f) partsCache.set(k, (f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", ...opts })));
+  return f;
+}
+function parts(ms, tz) {
+  const o = {};
+  for (const p of fmt(tz, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(new Date(ms))) o[p.type] = p.value;
+  return o;
+}
+
+// その時刻がユーザーのタイムゾーンで何日か (0時区切り)
+export function dayKey(ms, tz) {
+  const p = parts(ms, tz);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+export function localTime(ms, tz) {
+  const p = parts(ms, tz);
+  return `${p.hour}:${p.minute}`;
+}
+
+export function addDays(key, n) {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+// ユーザーのタイムゾーンで次の 0時になる時刻
+export function nextMidnight(now, tz) {
+  const p = parts(now, tz);
+  const minsToday = (+p.hour) * 60 + (+p.minute);
+  // 秒は無視してよい精度で十分
+  return now - (now % MIN) + (24 * 60 - minsToday) * MIN;
+}
+
+// 今すぐ始めて毎回使い切った場合、今日あと何回到達できるか
+export function possibleToday(now, tz) {
+  const left = nextMidnight(now, tz) - now;
+  return Math.max(0, Math.ceil(left / WINDOW_MS));
+}
+
+const DOW = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+// 週 (月曜はじまり) の初日
+export function weekKey(ms, tz) {
+  return addDays(dayKey(ms, tz), -DOW[parts(ms, tz).weekday]);
+}
+
+// リセットから再開までの時間。再開していない・休憩とみなす場合は null
+export function delayOf(w) {
+  if (w.resumed_at == null) return null;
+  const d = Math.max(0, w.resumed_at - w.reset_at);
+  return d <= CHASE_MS ? d : null;
+}
+
+export function xpOf(w) {
+  const d = delayOf(w);
+  return 100 + (d == null ? 0 : d <= QUICK_MS ? 50 : d <= 15 * MIN ? 20 : 0);
+}
+
+// windows: [{tool, hit_at, reset_at, resumed_at}]
+export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now() } = {}) {
+  const ws = [...windows].sort((a, b) => a.hit_at - b.hit_at);
+  const today = dayKey(now, tz);
+  const thisWeek = weekKey(now, tz);
+  const days = {};
+  let xp = 0, weekXp = 0;
+  for (const w of ws) {
+    const k = dayKey(w.hit_at, tz);
+    const d = (days[k] ??= { count: 0, claude: 0, codex: 0, xp: 0, lateMin: 0 });
+    const x = xpOf(w);
+    d.count++;
+    d[w.tool] = (d[w.tool] ?? 0) + 1;
+    d.xp += x;
+    const late = delayOf(w);
+    if (late != null) d.lateMin += Math.round(late / MIN);
+    xp += x;
+    if (weekKey(w.hit_at, tz) === thisWeek) weekXp += x;
+  }
+  const met = (k) => (days[k]?.count ?? 0) >= goal;
+
+  // ストリーク: 最初の記録日から昨日までをたどる。未達の日はフリーズがあれば自動で使う
+  let run = 0, best = 0, freezes = 0, metRun = 0;
+  const frozen = [];
+  const first = ws.length ? dayKey(ws[0].hit_at, tz) : today;
+  for (let k = first; k < today; k = addDays(k, 1)) {
+    if (met(k)) {
+      run++; metRun++;
+      if (metRun % FREEZE_EVERY === 0) freezes = Math.min(MAX_FREEZES, freezes + 1);
+    } else if (run > 0 && freezes > 0) {
+      freezes--; frozen.push(k);
+    } else {
+      run = 0; metRun = 0;
+    }
+    best = Math.max(best, run);
+  }
+  // 今日は未達でもまだ途切れていない (Duolingo と同じ)
+  const todayDone = met(today);
+  const streak = run + (todayDone ? 1 : 0);
+  best = Math.max(best, streak);
+
+  // 即スタート連続: 新しい枠から順に、5分以内に再開できた回数
+  let quickRun = 0;
+  for (const w of [...ws].sort((a, b) => b.reset_at - a.reset_at)) {
+    if (w.reset_at > now) continue;                                       // まだリセット前
+    if (w.resumed_at == null && now - w.reset_at < CHASE_MS) continue;     // 再開待ち
+    const d = delayOf(w);
+    if (d != null && d <= QUICK_MS) quickRun++;
+    else break;
+  }
+
+  // ツールごとの今の状態 (リミット中なら次のリセット時刻)
+  const tools = {};
+  for (const w of ws) {
+    if (w.reset_at > now && (!tools[w.tool] || w.reset_at > tools[w.tool].resetAt)) {
+      tools[w.tool] = { state: "limited", resetAt: w.reset_at, hitAt: w.hit_at };
+    }
+  }
+  const lastReset = {};
+  for (const w of ws) {
+    if (w.reset_at <= now && (!lastReset[w.tool] || w.reset_at > lastReset[w.tool].reset_at)) lastReset[w.tool] = w;
+  }
+
+  return {
+    today, goal, tz,
+    todayCount: days[today]?.count ?? 0,
+    todayDone,
+    todayLateMin: days[today]?.lateMin ?? 0,
+    possibleToday: possibleToday(now, tz),
+    streak, bestStreak: best, freezes, frozenDays: frozen,
+    quickRun,
+    xp, weekXp, week: thisWeek,
+    total: ws.length,
+    days,
+    tools,
+    lastReset,
+  };
+}
+
+// ---------- 通知の文面 (キャラクター「リミ」の口調) ----------
+export const msg = {
+  reset(tool, s, now) {
+    const next = localTime(now + WINDOW_MS, s.tz);
+    const left = Math.max(0, s.goal - s.todayCount);
+    return {
+      title: `⚡ ${TOOL_NAME[tool]} がリセットされたよ！`,
+      body: `今すぐ始めれば次のリセットは ${next}。` +
+        (left ? `今日はあと ${left} 回で目標達成！` : `今日はもう ${s.todayCount} 回。記録を伸ばそう`),
+      tag: `reset-${tool}`,
+    };
+  },
+  late(tool, minutes, s, now) {
+    const next = localTime(now + WINDOW_MS, s.tz);
+    return {
+      title: `⏰ リセットから ${minutes} 分たったよ…`,
+      body: `${TOOL_NAME[tool]} がずっと待ってる。今始めても次のリセットは ${next}。出遅れはそのまま次に響くよ`,
+      tag: `late-${tool}`,
+    };
+  },
+  pinch(s) {
+    const left = s.goal - s.todayCount;
+    const fire = s.streak > 0 ? `🔥${s.streak}日連続が途切れちゃう` : "今日こそ記録を始めよう";
+    return {
+      title: `😱 今日まだ ${s.todayCount}/${s.goal} 回…`,
+      body: `あと ${left} 回。${fire}${s.freezes > 0 ? `（フリーズ ${s.freezes} 個あり）` : ""}。今から始めれば最大 ${s.possibleToday} 回いけるよ`,
+      tag: "pinch",
+    };
+  },
+  goal(s) {
+    return {
+      title: `🔥 ${s.streak}日連続 達成！`,
+      body: `今日 ${s.todayCount} 回使い切ったよ。${s.quickRun >= 2 ? `即スタート ${s.quickRun} 連続、えらすぎる` : "この調子！"}`,
+      tag: "goal",
+    };
+  },
+};

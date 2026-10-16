@@ -1,0 +1,72 @@
+-- ratelimit.world の D1 スキーマ。時刻はすべて epoch ミリ秒。
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  github_id INTEGER UNIQUE,
+  login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  name TEXT,
+  avatar_url TEXT,
+  tz TEXT NOT NULL DEFAULT 'UTC',
+  goal INTEGER NOT NULL DEFAULT 2,
+  remind_at TEXT NOT NULL DEFAULT '21:00',         -- ピンチ通知の時刻 (ユーザーのタイムゾーン)
+  notify TEXT NOT NULL DEFAULT '{"reset":true,"late":true,"pinch":true,"goal":true}',
+  public INTEGER NOT NULL DEFAULT 1,
+  codex_state TEXT,                                -- 直近の Codex 5時間枠 {at, usedPercent, resetAt}
+  last_sync_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+-- ブラウザのログインセッション (トークンは SHA-256 で保存)
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
+-- CLI の認証トークン
+CREATE TABLE IF NOT EXISTS cli_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  platform TEXT,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
+
+-- CLI のログイン待ち (デバイスフロー)
+CREATE TABLE IF NOT EXISTS cli_logins (
+  device_code TEXT PRIMARY KEY,
+  user_code TEXT NOT NULL UNIQUE,
+  user_id INTEGER,
+  token TEXT,
+  platform TEXT,
+  expires_at INTEGER NOT NULL
+);
+
+-- 5時間枠のリミット到達。1つの枠 = (user, tool, reset_at)
+CREATE TABLE IF NOT EXISTS windows (
+  user_id INTEGER NOT NULL,
+  tool TEXT NOT NULL,                -- 'claude' | 'codex'
+  reset_at INTEGER NOT NULL,
+  hit_at INTEGER NOT NULL,
+  resumed_at INTEGER,                -- リセット後に最初に使い始めた時刻
+  PRIMARY KEY (user_id, tool, reset_at)
+);
+CREATE INDEX IF NOT EXISTS windows_reset ON windows (reset_at);
+CREATE INDEX IF NOT EXISTS windows_user_hit ON windows (user_id, hit_at);
+
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS push_subs_user ON push_subs (user_id);
+
+-- 同じ通知を二度送らないための記録
+CREATE TABLE IF NOT EXISTS sent (
+  user_id INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, key)
+);

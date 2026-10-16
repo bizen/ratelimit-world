@@ -1,0 +1,458 @@
+// ratelimit.world: Cloudflare Worker (API + ページ + 毎分の通知 Cron)
+import { computeStats, msg, validTz, localTime, dayKey, weekKey, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
+import { sendPush, b64u } from "./webpush.js";
+import * as pages from "./pages.js";
+
+const SESSION_COOKIE = "rw_session";
+const SESSION_DAYS = 90;
+const STATS_DAYS = 120;    // ストリーク計算に読む期間
+const LATE_AFTER = 10 * MIN;
+
+// ---------- small helpers ----------
+const json = (data, status = 200, headers = {}) =>
+  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
+const html = (body, status = 200, headers = {}) =>
+  new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...headers } });
+const redirect = (to, headers = {}) => new Response(null, { status: 302, headers: { location: to, ...headers } });
+
+const randomToken = (bytes = 32) => b64u(crypto.getRandomValues(new Uint8Array(bytes)));
+async function sha256(s) {
+  return b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
+}
+
+function getCookie(req, name) {
+  const m = (req.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+const cookie = (name, value, maxAge) =>
+  `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+
+// cookie 認証の POST は同じオリジンからだけ受け付ける (CSRF 対策)
+function sameOrigin(req) {
+  const o = req.headers.get("origin");
+  return !o || o === new URL(req.url).origin;
+}
+
+const parseNotify = (u) => { try { return { reset: true, late: true, pinch: true, goal: true, ...JSON.parse(u.notify) }; } catch { return { reset: true, late: true, pinch: true, goal: true }; } };
+
+// ---------- auth ----------
+async function currentUser(req, env) {
+  const t = getCookie(req, SESSION_COOKIE);
+  if (!t) return null;
+  return env.DB.prepare(
+    "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
+  ).bind(await sha256(t), Date.now()).first();
+}
+
+async function startSession(env, userId, location) {
+  const t = randomToken();
+  await env.DB.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)")
+    .bind(await sha256(t), userId, Date.now() + SESSION_DAYS * DAY).run();
+  return redirect(location, { "set-cookie": cookie(SESSION_COOKIE, t, SESSION_DAYS * 86400) });
+}
+
+async function cliUser(req, env) {
+  const m = (req.headers.get("authorization") || "").match(/^Bearer (.+)$/);
+  if (!m) return null;
+  const h = await sha256(m[1]);
+  const u = await env.DB.prepare("SELECT u.* FROM cli_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?").bind(h).first();
+  if (u) await env.DB.prepare("UPDATE cli_tokens SET last_used_at = ? WHERE token_hash = ?").bind(Date.now(), h).run();
+  return u;
+}
+
+const safeNext = (n) => (n && /^\/[^/\\]/.test(n) ? n : "/me");
+
+async function githubLogin(req, env) {
+  const url = new URL(req.url);
+  const state = randomToken(16);
+  const next = safeNext(url.searchParams.get("next"));
+  const gh = new URL("https://github.com/login/oauth/authorize");
+  gh.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
+  gh.searchParams.set("redirect_uri", `${url.origin}/auth/github/callback`);
+  gh.searchParams.set("scope", "read:user");
+  gh.searchParams.set("state", state);
+  return redirect(gh.toString(), { "set-cookie": cookie("rw_oauth", `${state}|${next}`, 600) });
+}
+
+async function githubCallback(req, env) {
+  const url = new URL(req.url);
+  const [state, next] = (getCookie(req, "rw_oauth") || "").split("|");
+  if (!state || state !== url.searchParams.get("state")) return html(pages.message("ログインに失敗しました", "もう一度お試しください。"), 400);
+  const tok = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code: url.searchParams.get("code") }),
+  }).then((r) => r.json());
+  if (!tok.access_token) return html(pages.message("ログインに失敗しました", "GitHub から認証情報を受け取れませんでした。"), 400);
+  const gh = await fetch("https://api.github.com/user", {
+    headers: { authorization: `Bearer ${tok.access_token}`, "user-agent": "ratelimit.world", accept: "application/vnd.github+json" },
+  }).then((r) => r.json());
+  if (!gh.id) return html(pages.message("ログインに失敗しました", "GitHub のユーザー情報を取得できませんでした。"), 400);
+  const user = await upsertUser(env, { githubId: gh.id, login: gh.login, name: gh.name, avatar: gh.avatar_url });
+  return startSession(env, user.id, safeNext(next));
+}
+
+async function upsertUser(env, { githubId, login, name, avatar }) {
+  const now = Date.now();
+  if (githubId) {
+    const u = await env.DB.prepare("SELECT * FROM users WHERE github_id = ?").bind(githubId).first();
+    if (u) {
+      await env.DB.prepare("UPDATE users SET login = ?, name = ?, avatar_url = ? WHERE id = ?").bind(login, name, avatar, u.id).run();
+      return { ...u, login };
+    }
+  } else {
+    const u = await env.DB.prepare("SELECT * FROM users WHERE login = ?").bind(login).first();
+    if (u) return u;
+  }
+  return env.DB.prepare("INSERT INTO users (github_id, login, name, avatar_url, created_at) VALUES (?, ?, ?, ?, ?) RETURNING *")
+    .bind(githubId ?? null, login, name ?? null, avatar ?? null, now).first();
+}
+
+// ---------- data ----------
+async function userWindows(env, userId, days = STATS_DAYS) {
+  const { results } = await env.DB.prepare("SELECT tool, hit_at, reset_at, resumed_at FROM windows WHERE user_id = ? AND hit_at > ? ORDER BY hit_at")
+    .bind(userId, Date.now() - days * DAY).all();
+  return results;
+}
+
+async function statsFor(env, user, now = Date.now()) {
+  const s = computeStats(await userWindows(env, user.id), { tz: user.tz, goal: user.goal, now });
+  let codex = null;
+  try { codex = user.codex_state ? JSON.parse(user.codex_state) : null; } catch {}
+  return { ...s, codex };
+}
+
+// 同じ通知を二度送らない。初めてなら true
+async function claim(env, userId, key) {
+  const r = await env.DB.prepare("INSERT OR IGNORE INTO sent (user_id, key, at) VALUES (?, ?, ?)").bind(userId, key, Date.now()).run();
+  return r.meta.changes > 0;
+}
+
+async function pushToUser(env, userId, message) {
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return 0;
+  const { results } = await env.DB.prepare("SELECT * FROM push_subs WHERE user_id = ?").bind(userId).all();
+  const vapid = { publicKey: env.VAPID_PUBLIC_KEY, privateKey: env.VAPID_PRIVATE_KEY, subject: env.VAPID_SUBJECT || "mailto:hello@ratelimit.world" };
+  let sent = 0;
+  for (const sub of results) {
+    try {
+      const r = await sendPush(sub, { url: "/me", ...message }, vapid);
+      if (r.status === 404 || r.status === 410) await env.DB.prepare("DELETE FROM push_subs WHERE endpoint = ?").bind(sub.endpoint).run();
+      else if (r.ok) sent++;
+      else console.log("push failed", r.status, r.text.slice(0, 200));
+    } catch (e) {
+      console.log("push error", e.message);
+    }
+  }
+  return sent;
+}
+
+// ---------- CLI からの送信 ----------
+const TOOLS = new Set(["claude", "codex"]);
+const isTime = (n) => Number.isFinite(n) && n > 1.5e12 && n < 4e12;
+
+async function handleSync(req, env) {
+  const user = await cliUser(req, env);
+  if (!user) return json({ error: "unauthorized" }, 401);
+  const body = await req.json().catch(() => null);
+  if (!body || !Array.isArray(body.windows)) return json({ error: "bad request" }, 400);
+  const now = Date.now();
+
+  // 明らかにおかしいものは捨てる (到達からリセットまでは 5時間+α 以内、未来の到達はない)
+  const incoming = body.windows.slice(0, 1000).filter((w) =>
+    TOOLS.has(w.tool) && isTime(w.hitAt) && isTime(w.resetAt) && w.hitAt <= now + 5 * MIN &&
+    w.resetAt > w.hitAt && w.resetAt - w.hitAt <= WINDOW_MS + 15 * MIN &&
+    (w.resumedAt == null || (isTime(w.resumedAt) && w.resumedAt >= w.resetAt && w.resumedAt <= now + 5 * MIN)));
+
+  // 「今使っている」合図 (hook の UserPromptSubmit) は、ログに残る前でも再開時刻として使う
+  const active = {};
+  for (const [tool, t] of Object.entries(body.active || {})) if (TOOLS.has(tool) && isTime(t) && t <= now + MIN) active[tool] = t;
+
+  const existing = await userWindows(env, user.id, 70);
+  const stmts = [];
+  for (const w of incoming) {
+    // Codex のリセット時刻は数秒ぶれることがあるので、15分以内なら同じ枠とみなす
+    const same = existing.find((e) => e.tool === w.tool && Math.abs(e.reset_at - w.resetAt) < 15 * MIN);
+    if (same) {
+      const hit = Math.min(same.hit_at, w.hitAt);
+      const resumed = same.resumed_at ?? w.resumedAt ?? null;
+      if (hit !== same.hit_at || resumed !== same.resumed_at) {
+        stmts.push(env.DB.prepare("UPDATE windows SET hit_at = ?, resumed_at = ? WHERE user_id = ? AND tool = ? AND reset_at = ?")
+          .bind(hit, resumed, user.id, w.tool, same.reset_at));
+        same.hit_at = hit; same.resumed_at = resumed;
+      }
+    } else {
+      stmts.push(env.DB.prepare("INSERT OR IGNORE INTO windows (user_id, tool, reset_at, hit_at, resumed_at) VALUES (?, ?, ?, ?, ?)")
+        .bind(user.id, w.tool, w.resetAt, w.hitAt, w.resumedAt ?? null));
+      existing.push({ tool: w.tool, reset_at: w.resetAt, hit_at: w.hitAt, resumed_at: w.resumedAt ?? null });
+    }
+  }
+  for (const [tool, t] of Object.entries(active)) {
+    for (const e of existing) {
+      if (e.tool === tool && e.resumed_at == null && e.reset_at <= t && t - e.reset_at <= CHASE_MS) {
+        stmts.push(env.DB.prepare("UPDATE windows SET resumed_at = ? WHERE user_id = ? AND tool = ? AND reset_at = ?").bind(t, user.id, tool, e.reset_at));
+        e.resumed_at = t;
+      }
+    }
+  }
+
+  const codex = body.current?.codex;
+  const codexState = codex && isTime(codex.at) && isTime(codex.resetAt) && Number.isFinite(codex.usedPercent)
+    ? JSON.stringify({ at: codex.at, resetAt: codex.resetAt, usedPercent: codex.usedPercent }) : user.codex_state;
+  // タイムゾーンは設定画面で変えていなければ PC のものに合わせる
+  const tz = user.tz === "UTC" && validTz(body.client?.tz) ? body.client.tz : user.tz;
+  stmts.push(env.DB.prepare("UPDATE users SET codex_state = ?, tz = ?, last_sync_at = ? WHERE id = ?").bind(codexState, tz, now, user.id));
+  await env.DB.batch(stmts);
+
+  const fresh = { ...user, tz, codex_state: codexState };
+  const s = await statsFor(env, fresh, now);
+  if (s.todayDone && parseNotify(fresh).goal && (await claim(env, user.id, `goal:${s.today}`))) {
+    await pushToUser(env, user.id, msg.goal(s));
+  }
+  return json({ ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak });
+}
+
+// ---------- CLI ログイン (デバイスフロー) ----------
+async function cliStart(req, env) {
+  const body = await req.json().catch(() => ({}));
+  const deviceCode = randomToken();
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const rnd = crypto.getRandomValues(new Uint8Array(8));
+  const raw = [...rnd].map((b) => alphabet[b % alphabet.length]).join("");
+  const userCode = `${raw.slice(0, 4)}-${raw.slice(4)}`;
+  await env.DB.prepare("DELETE FROM cli_logins WHERE expires_at < ?").bind(Date.now()).run();
+  await env.DB.prepare("INSERT INTO cli_logins (device_code, user_code, platform, expires_at) VALUES (?, ?, ?, ?)")
+    .bind(deviceCode, userCode, String(body.platform || "").slice(0, 20), Date.now() + 10 * MIN).run();
+  const origin = new URL(req.url).origin;
+  return json({ deviceCode, userCode, verifyUrl: `${origin}/cli/verify?code=${userCode}` });
+}
+
+async function cliPoll(req, env) {
+  const { deviceCode } = await req.json().catch(() => ({}));
+  const row = await env.DB.prepare("SELECT c.*, u.login FROM cli_logins c LEFT JOIN users u ON u.id = c.user_id WHERE device_code = ?").bind(deviceCode || "").first();
+  if (!row) return json({ error: "invalid" }, 400);
+  if (row.expires_at < Date.now()) return json({ error: "expired" }, 400);
+  if (!row.token) return json({ pending: true });
+  await env.DB.prepare("DELETE FROM cli_logins WHERE device_code = ?").bind(deviceCode).run();
+  return json({ token: row.token, login: row.login });
+}
+
+async function cliVerify(req, env, user) {
+  const url = new URL(req.url);
+  if (req.method === "GET") {
+    return html(pages.cliVerify(user, url.searchParams.get("code") || ""));
+  }
+  if (!sameOrigin(req)) return html(pages.message("エラー", "不正なリクエストです"), 403);
+  const form = await req.formData();
+  const code = String(form.get("code") || "").toUpperCase().trim();
+  const row = await env.DB.prepare("SELECT * FROM cli_logins WHERE user_code = ? AND expires_at > ? AND token IS NULL").bind(code, Date.now()).first();
+  if (!row) return html(pages.message("コードが見つかりません", "期限切れかもしれません。PC でもう一度 setup を実行してください。"), 400);
+  const token = `rw_${randomToken()}`;
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO cli_tokens (token_hash, user_id, platform, created_at) VALUES (?, ?, ?, ?)").bind(await sha256(token), user.id, row.platform, Date.now()),
+    env.DB.prepare("UPDATE cli_logins SET user_id = ?, token = ? WHERE device_code = ?").bind(user.id, token, row.device_code),
+  ]);
+  return html(pages.message("✅ PC を連携しました", "ターミナルに戻ってください。セットアップが自動で進みます。", "/me", "ダッシュボードへ"));
+}
+
+// ---------- settings / push ----------
+async function saveSettings(req, env, user) {
+  const b = await req.json().catch(() => ({}));
+  const goal = Math.min(5, Math.max(1, parseInt(b.goal ?? user.goal, 10) || user.goal));
+  const tz = validTz(b.tz) ? b.tz : user.tz;
+  const remindAt = /^([01]\d|2[0-3]):[0-5]\d$/.test(b.remindAt) ? b.remindAt : user.remind_at;
+  const n = parseNotify(user);
+  for (const k of Object.keys(n)) if (typeof b.notify?.[k] === "boolean") n[k] = b.notify[k];
+  const pub = typeof b.public === "boolean" ? (b.public ? 1 : 0) : user.public;
+  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify = ?, public = ? WHERE id = ?")
+    .bind(goal, tz, remindAt, JSON.stringify(n), pub, user.id).run();
+  return json({ ok: true });
+}
+
+async function subscribe(req, env, user) {
+  const b = await req.json().catch(() => ({}));
+  const { endpoint, keys } = b.subscription || {};
+  if (!/^https:\/\//.test(endpoint || "") || !keys?.p256dh || !keys?.auth) return json({ error: "bad subscription" }, 400);
+  await env.DB.prepare("INSERT INTO push_subs (endpoint, user_id, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth")
+    .bind(endpoint, user.id, keys.p256dh, keys.auth, Date.now()).run();
+  return json({ ok: true });
+}
+
+// ---------- pages data ----------
+async function leaderboard(env, now = Date.now()) {
+  // 今週 (各自のタイムゾーンの月曜 0時から) の XP。候補は直近 8日に到達のある公開ユーザー
+  const { results } = await env.DB.prepare(
+    `SELECT u.id, u.login, u.name, u.avatar_url, u.tz, u.goal FROM users u
+     WHERE u.public = 1 AND EXISTS (SELECT 1 FROM windows w WHERE w.user_id = u.id AND w.hit_at > ?)`,
+  ).bind(now - 8 * DAY).all();
+  const rows = [];
+  for (const u of results) {
+    const s = computeStats(await userWindows(env, u.id), { tz: u.tz, goal: u.goal, now });
+    if (s.weekXp > 0) rows.push({ ...u, weekXp: s.weekXp, streak: s.streak, todayCount: s.todayCount });
+  }
+  return rows.sort((a, b) => b.weekXp - a.weekXp).slice(0, 100);
+}
+
+// ---------- cron: 毎分 ----------
+async function runCron(env, now = Date.now()) {
+  // 1) リセット通知: 直近 3分以内にリセットされた枠
+  const due = await env.DB.prepare(
+    `SELECT w.*, u.tz, u.goal, u.notify, u.codex_state FROM windows w JOIN users u ON u.id = w.user_id
+     WHERE w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
+  ).bind(now - 3 * MIN, now).all();
+  for (const w of due.results) {
+    if (!parseNotify(w).reset) continue;
+    if (!(await claim(env, w.user_id, `reset:${w.tool}:${w.reset_at}`))) continue;
+    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal, codex_state: w.codex_state }, now);
+    await pushToUser(env, w.user_id, msg.reset(w.tool, s, now));
+  }
+
+  // 2) 出遅れ通知: リセットから 10分たっても再開していない枠
+  const late = await env.DB.prepare(
+    `SELECT w.*, u.tz, u.goal, u.notify, u.codex_state FROM windows w JOIN users u ON u.id = w.user_id
+     WHERE w.resumed_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
+  ).bind(now - LATE_AFTER - 5 * MIN, now - LATE_AFTER).all();
+  for (const w of late.results) {
+    if (!parseNotify(w).late) continue;
+    if (w.tool === "codex") {
+      // Codex は毎ターン使用状況を送ってくるので、リセット後の記録があれば再開済み
+      try { if (JSON.parse(w.codex_state || "null")?.at > w.reset_at) continue; } catch {}
+    }
+    if (!(await claim(env, w.user_id, `late:${w.tool}:${w.reset_at}`))) continue;
+    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal, codex_state: w.codex_state }, now);
+    await pushToUser(env, w.user_id, msg.late(w.tool, Math.round((now - w.reset_at) / MIN), s, now));
+  }
+
+  // 3) ピンチ通知: 各自の remind_at (現地時刻) から 10分以内で、今日まだ目標未達
+  const users = await env.DB.prepare(
+    "SELECT u.* FROM users u WHERE EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = u.id)",
+  ).all();
+  for (const u of users.results) {
+    const t = localTime(now, u.tz);
+    const [h, m] = u.remind_at.split(":").map(Number);
+    const [th, tm] = t.split(":").map(Number);
+    const diff = th * 60 + tm - (h * 60 + m);
+    if (diff < 0 || diff >= 10 || !parseNotify(u).pinch) continue;
+    const day = dayKey(now, u.tz);
+    const s = await statsFor(env, u, now);
+    if (s.todayDone) continue;
+    if (!(await claim(env, u.id, `pinch:${day}`))) continue;
+    await pushToUser(env, u.id, msg.pinch(s));
+  }
+
+  // 古い記録の掃除 (1日 1回で十分なので 0分台だけ)
+  if (new Date(now).getUTCMinutes() === 0) {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM sent WHERE at < ?").bind(now - 14 * DAY),
+      env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+      env.DB.prepare("DELETE FROM cli_logins WHERE expires_at < ?").bind(now),
+    ]);
+  }
+}
+
+// ---------- install script ----------
+function installScript(origin) {
+  return `#!/bin/sh
+# ratelimit.world のセットアップ: CLI を ~/.ratelimit-world に置いてログインする
+set -e
+command -v node >/dev/null 2>&1 || { echo "Node.js 18 以上が必要です: https://nodejs.org" >&2; exit 1; }
+mkdir -p "$HOME/.ratelimit-world"
+curl -fsSL "${origin}/cli.mjs" -o "$HOME/.ratelimit-world/ratelimit-world.mjs"
+node "$HOME/.ratelimit-world/ratelimit-world.mjs" setup --server "${origin}" < /dev/tty
+`;
+}
+
+// ---------- router ----------
+async function route(req, env) {
+  const url = new URL(req.url);
+  const p = url.pathname;
+  const m = req.method;
+  const origin = url.origin;
+
+  if (p === "/api/sync" && m === "POST") return handleSync(req, env);
+  if (p === "/api/cli/start" && m === "POST") return cliStart(req, env);
+  if (p === "/api/cli/poll" && m === "POST") return cliPoll(req, env);
+  if (p === "/install.sh") return new Response(installScript(origin), { headers: { "content-type": "text/plain; charset=utf-8" } });
+
+  if (p === "/login") {
+    if (env.DEV_LOGIN === "1" && !env.GITHUB_CLIENT_ID) return html(pages.devLogin(url.searchParams.get("next") || "/me"));
+    return githubLogin(req, env);
+  }
+  if (p === "/auth/github/callback") return githubCallback(req, env);
+  if (p === "/dev/login" && env.DEV_LOGIN === "1") {
+    const login = (url.searchParams.get("login") || "dev").replace(/[^\w-]/g, "").slice(0, 39) || "dev";
+    const user = await upsertUser(env, { login, name: login });
+    return startSession(env, user.id, safeNext(url.searchParams.get("next")));
+  }
+
+  const user = await currentUser(req, env);
+
+  if (p === "/logout" && m === "POST") {
+    const t = getCookie(req, SESSION_COOKIE);
+    if (t) await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha256(t)).run();
+    return redirect("/", { "set-cookie": cookie(SESSION_COOKIE, "", 0) });
+  }
+
+  if (p === "/") {
+    return html(pages.landing(user, origin));
+  }
+  if (p === "/leaderboard") return html(pages.leaderboard(user, await leaderboard(env)));
+
+  const prof = p.match(/^\/@([\w-]{1,39})(\/card\.svg)?$/);
+  if (prof) {
+    const u = await env.DB.prepare("SELECT * FROM users WHERE login = ?").bind(prof[1]).first();
+    const visible = u && (u.public || user?.id === u.id);
+    if (prof[2]) {
+      if (!visible) return new Response("not found", { status: 404 });
+      return new Response(pages.card(u, await statsFor(env, u)), { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=300" } });
+    }
+    if (!visible) return html(pages.message("見つかりません", "このプロフィールは存在しないか、非公開です。"), 404);
+    return html(pages.profile(user, u, await statsFor(env, u), origin));
+  }
+
+  // ここから先はログインが必要
+  if (p === "/cli/verify") {
+    if (!user) return redirect(`/login?next=${encodeURIComponent(p + url.search)}`);
+    return cliVerify(req, env, user);
+  }
+  if (p === "/me") {
+    if (!user) return redirect("/login?next=/me");
+    const hasCli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
+    return html(pages.dashboard(user, await statsFor(env, user), { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user) }));
+  }
+  if (p.startsWith("/api/")) {
+    if (!user) return json({ error: "unauthorized" }, 401);
+    if (m === "POST" && !sameOrigin(req)) return json({ error: "forbidden" }, 403);
+    if (p === "/api/me" && m === "GET") return json({ user: { login: user.login, tz: user.tz, goal: user.goal }, stats: await statsFor(env, user) });
+    if (p === "/api/settings" && m === "POST") return saveSettings(req, env, user);
+    if (p === "/api/push/subscribe" && m === "POST") return subscribe(req, env, user);
+    if (p === "/api/push/unsubscribe" && m === "POST") {
+      const b = await req.json().catch(() => ({}));
+      await env.DB.prepare("DELETE FROM push_subs WHERE endpoint = ? AND user_id = ?").bind(b.endpoint || "", user.id).run();
+      return json({ ok: true });
+    }
+    if (p === "/api/push/test" && m === "POST") {
+      const n = await pushToUser(env, user.id, { title: "🔥 通知テスト", body: "リセットの瞬間にこんなふうに届くよ！", tag: "test" });
+      return json({ ok: n > 0, sent: n });
+    }
+  }
+  return null;
+}
+
+export default {
+  async fetch(req, env) {
+    try {
+      const res = await route(req, env);
+      if (res) return res;
+      // 静的ファイル (sw.js, app.js など) は assets が先に返すので、ここに来るのは見つからないものだけ
+      return html(pages.message("ページが見つかりません", ""), 404);
+    } catch (e) {
+      console.log("error", e.stack || e.message);
+      return json({ error: "internal error" }, 500);
+    }
+  },
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runCron(env, event.scheduledTime));
+  },
+};
+
+export { runCron };
