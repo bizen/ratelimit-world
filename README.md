@@ -1,6 +1,31 @@
 # ratelimit.world
 
-Claude Code と Codex の 5時間枠を、**リセットの瞬間から**使い切るためのウェブサービス。
+**https://ratelimit.world** — Claude Code と Codex の 5時間枠を、**リセットの瞬間から**使い切るためのウェブサービス。
+
+*A Duolingo-style tracker for AI coding rate limits: it pings your phone the moment a 5-hour window resets, and turns maxing out every window into streaks, XP, leagues and daily quests.*
+
+<p align="center">
+  <img src="docs/dashboard.png" alt="ダッシュボード" width="300">
+  &nbsp;
+  <img src="docs/profile.png" alt="プロフィール" width="300">
+</p>
+<p align="center"><img src="docs/share-card.png" alt="シェアカード" width="600"></p>
+
+### できること
+
+- **リセットの瞬間に通知**: スマホ (PWA の Web Push) に「リセットされた」「あと5分でリセット」「10分たっても再開していない」を届ける
+- **ストリークと XP**: 目標の枠数を使い切った日が続くと 🔥、1日の何枠目かで増えるコンボ XP、即スタートのボーナス、フリーズ
+- **デイリークエスト / リーグ / フレンド**: 日替わりのお題3つ、同じプランの30人で競う週替わりのリーグ（昇格・降格）、GitHub ユーザー名でフォロー
+- **キャラクター「リミ」**: 即スタートで喜び、出遅れるとしょんぼりする
+- **ペース表示**: 今の使い方でリセットまでに使い切れるか（「22:25 に使い切り」「このペースだと 16% 余る」）
+- **PC 側**: ステータスライン・Mac のメニューバー (SwiftBar) にリセットまでの時間を表示する CLI
+- **日本語 / 英語**
+
+### 技術
+
+Cloudflare Workers + D1 (SQLite) · Web Push (RFC 8291 / VAPID を WebCrypto で実装) · GitHub OAuth · シェアカードは SVG を resvg-wasm で PNG に · 依存なしの Node.js CLI (Claude Code の hooks と Codex の notify から呼ばれる) · フレームワークなしの HTML/CSS/JS
+
+---
 
 5時間枠は「リセット後に最初に使った時刻」から数え直されます。3:00 にリセットされても 3:30 に再開すれば、次のリセットは 8:30 になる。この出遅れは1日のあいだ積み重なっていきます。ratelimit.world はリセットの瞬間にスマホへ通知し、使い切った回数をストリーク（Duolingo 方式）で記録します。
 
