@@ -109,7 +109,8 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       const status = $("[data-settings-status]");
       const res = await fetch("/api/settings", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ goal: f.get("goal"), remindAt: f.get("remindAt"), tz: f.get("tz"), lang: f.get("lang"), notifyLead: f.get("notifyLead"), notify, public: $("input[name=public]", form).checked, statusline: $("input[name=statusline]", form).checked }),
+        body: JSON.stringify({ goal: f.get("goal"), remindAt: f.get("remindAt"), tz: f.get("tz"), lang: f.get("lang"), notifyLead: f.get("notifyLead"), notify, public: $("input[name=public]", form).checked, statusline: $("input[name=statusline]", form).checked,
+          warmup: $("input[name=warmup]", form).checked, warmupQuiet: { from: f.get("quietFrom") || "", to: f.get("quietTo") || "" } }),
       });
       status.textContent = res.ok ? T("c.saved") : T("c.saveFailed");
       if (res.ok) setTimeout(() => location.reload(), 600);

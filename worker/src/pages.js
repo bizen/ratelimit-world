@@ -721,6 +721,12 @@ ${setupCard(ctx, { origin, hasCli, last: lastSync(ctx) })}
       ${chk("goal")}
       ${chk("league")}
     </fieldset>
+    <fieldset class="warmup-set" id="warmup"><legend>⚡ ${t("wu.h")}</legend>
+      <label class="toggle"><input type="checkbox" name="warmup" ${user.warmup ? "checked" : ""}><span>${t("wu.on")}<small class="hint">${t("wu.hint")}</small></span></label>
+      <div class="wu-quiet"><span>${t("wu.quiet")}</span>
+        <input type="time" name="quietFrom" value="${esc((user.warmup_quiet || "").split("-")[0] || "")}" aria-label="${t("wu.from")}">〜<input type="time" name="quietTo" value="${esc((user.warmup_quiet || "").split("-")[1] || "")}" aria-label="${t("wu.to")}">
+        <small class="hint">${t("wu.quietHint")}</small></div>
+    </fieldset>
     <label class="toggle"><input type="checkbox" name="statusline" ${user.claude_statusline ? "checked" : ""}><span>${t("settings.statusline")}<small class="hint">${t("settings.statusline.hint")}</small></span></label>
     <label class="toggle"><input type="checkbox" name="public" ${user.public ? "checked" : ""}><span>${t("settings.public")}</span></label>
     <div class="row"><button class="btn">${t("settings.save")}</button><span class="status" data-settings-status role="status"></span></div>
@@ -779,7 +785,7 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
     <div class="q-bar quick"><i style="width:${s.todayResetsPassed ? (s.todayQuick / s.todayResetsPassed) * 100 : 0}%"></i></div>
     ${quickTask(ctx, s, now)}
     <p class="late">${t("today.late", s.todayLateMin)}${s.quickRun > 0 ? ` · ${t("today.quick", s.quickRun)}` : ""}</p>
-    <p class="warmup">💡 ${t("warmup.tip")} <span class="soon">${t("warmup.soon")}</span></p>
+    ${user.warmup ? `<p class="warmup on">⚡ ${t("warmup.on")}</p>` : `<p class="warmup">💡 ${t("warmup.tip")} <a href="/settings#warmup">${t("warmup.set")}</a></p>`}
   </div>
 
   <div class="quest">

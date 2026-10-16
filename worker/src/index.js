@@ -468,6 +468,8 @@ async function handleSync(req, env) {
   }
   return json({
     ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak, lang: user.lang ?? null, statusline: !!user.claude_statusline,
+    // 自動ウォームアップの設定 (PC がリセット時刻に合わせて予約する)。quiet は 'HH:MM-HH:MM' (この時間帯は送らない)
+    warmup: { on: !!user.warmup, quiet: user.warmup_quiet || null },
     // 正式なドメインに移ったら、PC の CLI に送り先を切り替えてもらう
     ...(env.CANONICAL_ORIGIN ? { server: env.CANONICAL_ORIGIN } : {}),
     // PC のステータスライン・メニューバー用 (PC 側が保存し、残り時間はその場で計算する)
@@ -545,8 +547,13 @@ async function saveSettings(req, env, user) {
   const pub = typeof b.public === "boolean" ? (b.public ? 1 : 0) : user.public;
   const lang = LANGS.includes(b.lang) ? b.lang : user.lang;
   const statusline = typeof b.statusline === "boolean" ? (b.statusline ? 1 : 0) : user.claude_statusline;
-  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify_lead = ?, notify = ?, public = ?, lang = ?, claude_statusline = ? WHERE id = ?")
-    .bind(goal, tz, remindAt, lead, JSON.stringify(n), pub, lang, statusline, user.id).run();
+  const warmup = typeof b.warmup === "boolean" ? (b.warmup ? 1 : 0) : user.warmup;
+  // しない時間帯: 開始と終了がどちらも時刻で、同じでなければ使う。空なら一日中
+  const hm = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const quiet = b.warmupQuiet === undefined ? user.warmup_quiet
+    : hm.test(b.warmupQuiet?.from) && hm.test(b.warmupQuiet?.to) && b.warmupQuiet.from !== b.warmupQuiet.to ? `${b.warmupQuiet.from}-${b.warmupQuiet.to}` : null;
+  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify_lead = ?, notify = ?, public = ?, lang = ?, claude_statusline = ?, warmup = ?, warmup_quiet = ? WHERE id = ?")
+    .bind(goal, tz, remindAt, lead, JSON.stringify(n), pub, lang, statusline, warmup, quiet, user.id).run();
   // 画面の言語も合わせる
   return json({ ok: true }, 200, lang ? { "set-cookie": langCookie(lang) } : {});
 }

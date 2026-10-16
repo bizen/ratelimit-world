@@ -792,3 +792,10 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .fs-list li.done img, .fs-list li.done .noav { border-color: var(--ember); }
 .fs-name { font-size: 11.5px; font-weight: 700; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fs-sub { font-size: 11px; color: var(--muted); font-weight: 700; }
+
+/* 自動ウォームアップ (設定) */
+.warmup-set .wu-quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 0 28px; font-size: 14px; font-weight: 700; }
+.warmup-set .wu-quiet input { width: auto; }
+.warmup-set .wu-quiet .hint { flex-basis: 100%; }
+.warmup a { color: var(--violet); font-weight: 700; }
+.warmup.on { background: color-mix(in srgb, var(--go) 14%, transparent); }

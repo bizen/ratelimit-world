@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
   notify TEXT NOT NULL DEFAULT '{"hit":true,"reset":true,"late":true,"pinch":true,"goal":true}',
   public INTEGER NOT NULL DEFAULT 1,
   claude_statusline INTEGER NOT NULL DEFAULT 0, -- Claude Code のステータスラインを中継して使用率を読むか (オン/オフ)
+  warmup INTEGER NOT NULL DEFAULT 0,               -- 自動ウォームアップ (リセットの瞬間に PC から短い問い合わせを送って次の枠を始める)
+  warmup_quiet TEXT,                               -- ウォームアップしない時間帯 '01:00-07:00' (なければ一日中)
   lang TEXT,                                       -- 'ja' | 'en' (スマホ通知の言語。画面は cookie が優先)
   claude_plan TEXT,                                -- 'pro' | 'max_5x' | 'max_20x' ... (CLI が ~/.claude.json から読む)
   codex_plan TEXT,                                 -- 'plus' | 'pro' ... (Codex のログの plan_type)
