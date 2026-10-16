@@ -37,7 +37,8 @@ function sameOrigin(req) {
   return !o || o === new URL(req.url).origin;
 }
 
-const NOTIFY_DEFAULTS = { hit: true, reset: true, late: true, pinch: true, goal: true };
+const NOTIFY_DEFAULTS = { hit: true, soon: true, reset: true, late: true, pinch: true, goal: true };
+const LEAD_CHOICES = [1, 3, 5, 10, 15]; // 「もうすぐリセット」を送る何分前
 const parseNotify = (u) => { try { return { ...NOTIFY_DEFAULTS, ...JSON.parse(u.notify) }; } catch { return { ...NOTIFY_DEFAULTS }; } };
 
 // ---------- auth ----------
@@ -380,13 +381,14 @@ async function saveSettings(req, env, user) {
   const goal = Math.min(10, Math.max(1, parseInt(b.goal ?? user.goal, 10) || user.goal));
   const tz = validTz(b.tz) ? b.tz : user.tz;
   const remindAt = /^([01]\d|2[0-3]):[0-5]\d$/.test(b.remindAt) ? b.remindAt : user.remind_at;
+  const lead = LEAD_CHOICES.includes(+b.notifyLead) ? +b.notifyLead : user.notify_lead;
   const n = parseNotify(user);
   for (const k of Object.keys(n)) if (typeof b.notify?.[k] === "boolean") n[k] = b.notify[k];
   const pub = typeof b.public === "boolean" ? (b.public ? 1 : 0) : user.public;
   const lang = LANGS.includes(b.lang) ? b.lang : user.lang;
   const statusline = typeof b.statusline === "boolean" ? (b.statusline ? 1 : 0) : user.claude_statusline;
-  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify = ?, public = ?, lang = ?, claude_statusline = ? WHERE id = ?")
-    .bind(goal, tz, remindAt, JSON.stringify(n), pub, lang, statusline, user.id).run();
+  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify_lead = ?, notify = ?, public = ?, lang = ?, claude_statusline = ? WHERE id = ?")
+    .bind(goal, tz, remindAt, lead, JSON.stringify(n), pub, lang, statusline, user.id).run();
   // 画面の言語も合わせる
   return json({ ok: true }, 200, lang ? { "set-cookie": langCookie(lang) } : {});
 }
@@ -500,6 +502,18 @@ async function leaderboards(env, now = Date.now()) {
 
 // ---------- cron: 毎分 ----------
 async function runCron(env, now = Date.now()) {
+  // 0) もうすぐリセット: リミット中の枠が、各自が選んだ分数 (1〜15分) 以内にリセットされる
+  const soon = await env.DB.prepare(
+    `SELECT w.*, u.tz, u.goal, u.notify, u.lang, u.notify_lead FROM windows w JOIN users u ON u.id = w.user_id
+     WHERE w.ended_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
+  ).bind(now + MIN, now + 15 * MIN).all();
+  for (const w of soon.results) {
+    if (!parseNotify(w).soon || w.reset_at - now > (w.notify_lead ?? 5) * MIN) continue;
+    if (!(await claim(env, w.user_id, `soon:${w.tool}:${w.reset_at}`))) continue;
+    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal }, now);
+    await pushToUser(env, w.user_id, notice(w, "soon", s, now, { tool: w.tool, w }));
+  }
+
   // 1) リセット通知: 直近 3分以内にリセットされた枠
   const due = await env.DB.prepare(
     `SELECT w.*, u.tz, u.goal, u.notify, u.lang FROM windows w JOIN users u ON u.id = w.user_id

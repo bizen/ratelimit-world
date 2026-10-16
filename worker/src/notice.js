@@ -9,6 +9,7 @@ export function notice(u, kind, s, now, { tool, w, minutes } = {}) {
   const nextTier = s ? tierName(lang, s.nextTier) : "";
   let m;
   if (kind === "reset") m = P.reset(tool, s, { next: localTime(now + WINDOW_MS, s.tz), nextXp: s.nextXp, nextTier });
+  else if (kind === "soon") m = P.soon(tool, s, { minutes: Math.max(1, Math.round((w.reset_at - now) / 60000)), at: localTime(w.reset_at, s.tz) });
   else if (kind === "late") m = P.late(tool, minutes, s, { next: localTime(now + WINDOW_MS, s.tz) });
   else if (kind === "pinch") m = P.pinch(s);
   else if (kind === "goal") m = P.goal(s, { nextXp: s.nextXp, nextTier });

@@ -149,6 +149,9 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
   // 今日は未達でもまだ途切れていない (Duolingo と同じ)
   const todayDone = met(today);
   const streak = run + (todayDone ? 1 : 0);
+  // 次のフリーズまで: 達成した日が 7日続くごとに 1つ (最大 2つ)。今日の達成も数える
+  const metNow = metRun + (todayDone ? 1 : 0);
+  const freezeIn = freezes >= MAX_FREEZES ? null : FREEZE_EVERY - (metNow % FREEZE_EVERY);
   best = Math.max(best, streak);
 
   // 即スタート連続: 新しい枠から順に、5分以内に再開できた回数
@@ -238,7 +241,7 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     todayDone,
     todayLateMin: days[today]?.lateMin ?? 0,
     possibleToday: possibleToday(now, tz),
-    streak, bestStreak: best, freezes, frozenDays: frozen, lockedDays,
+    streak, bestStreak: best, freezes, freezeIn, frozenDays: frozen, lockedDays,
     weeklyLocks: weekly.filter((w) => w.reset_at > now).map((w) => ({ tool: w.tool, resetAt: w.reset_at })),
     trophies: weekly.length,
     quickRun,

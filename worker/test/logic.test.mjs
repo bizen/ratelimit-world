@@ -57,6 +57,16 @@ test("a missed day breaks the streak without a freeze", () => {
   assert.equal(s.freezes, 0);
 });
 
+test("days until the next freeze", () => {
+  const s3 = computeStats(daysOf(3, "2026-10-13"), { tz: TZ, goal: 2, now: jst("2026-10-16T09:00:00") });
+  assert.equal(s3.freezeIn, 4); // 3日続いた → あと4日
+  const s3done = computeStats([...daysOf(3, "2026-10-13"), ...daysOf(1, "2026-10-16")], { tz: TZ, goal: 2, now: jst("2026-10-16T20:00:00") });
+  assert.equal(s3done.freezeIn, 3); // 今日も達成 → あと3日
+  const full = computeStats(daysOf(15, "2026-10-01"), { tz: TZ, goal: 2, now: jst("2026-10-16T09:00:00") });
+  assert.equal(full.freezes, 2);
+  assert.equal(full.freezeIn, null); // 最大まで持っている
+});
+
 test("7-day run earns a freeze that saves a missed day", () => {
   const ws = [...daysOf(7, "2026-10-01"), ...daysOf(3, "2026-10-09")]; // 8日が抜け
   const s = computeStats(ws, { tz: TZ, goal: 2, now: jst("2026-10-12T09:00:00") });
@@ -151,7 +161,7 @@ test("all notifications render in both languages", async () => {
   const ws = daysOf(1, "2026-10-16", 1);
   const s = computeStats(ws, { tz: TZ, goal: 2, now });
   for (const lang of ["ja", "en"]) {
-    for (const [kind, extra] of [["reset", { tool: "claude" }], ["late", { tool: "codex", minutes: 12 }], ["pinch", {}], ["goal", {}], ["hit", { tool: "claude", w: ws[0] }], ["weekly", { tool: "codex", w: { reset_at: now + 3 * 86400000 } }], ["test", {}]]) {
+    for (const [kind, extra] of [["soon", { tool: "claude", w: { reset_at: now + 5 * 60000 } }], ["reset", { tool: "claude" }], ["late", { tool: "codex", minutes: 12 }], ["pinch", {}], ["goal", {}], ["hit", { tool: "claude", w: ws[0] }], ["weekly", { tool: "codex", w: { reset_at: now + 3 * 86400000 } }], ["test", {}]]) {
       const m = notice({ lang }, kind, kind === "test" ? null : s, now, extra);
       assert.ok(m.title && m.body && !/undefined|NaN/.test(m.title + m.body), `${lang} ${kind}: ${m.title} / ${m.body}`);
       if (lang === "en") assert.ok(!/[\u3040-\u30ff\u4e00-\u9fff]/.test(m.title + m.body), `${kind} has Japanese in English: ${m.title} ${m.body}`);

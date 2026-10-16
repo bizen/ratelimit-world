@@ -582,3 +582,5 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 /* 今日につながっていない過去のストリーク: グレーで落ち着かせる */
 .wd.past[class*="run-"]::before { background: color-mix(in srgb, var(--muted) 16%, transparent); }
 .wd.past[class*="run-"] .dot { color: var(--muted); }
+.settings label.lead { padding-left: 28px; font-size: 14px; }
+.stat .next { display: block; font: 700 11px var(--mono); color: var(--ice); margin-top: 2px; }

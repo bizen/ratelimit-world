@@ -414,7 +414,7 @@ export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify }) {
 <section class="stats-row" aria-label="${t("dash.stats")}">
   <div class="stat flame"><b>${s.streak}</b><span>${t("stat.streak")}</span></div>
   <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>${t("stat.weekXp")}</span></div>
-  <div class="stat ice" title="${t("stat.freezes.tip")}"><b>${s.freezes}</b><span>${t("stat.freezes")}</span></div>
+  <div class="stat ice" title="${t("stat.freezes.tip")}"><b>${s.freezes}</b><span>${t("stat.freezes")}</span><small class="next">${s.freezeIn == null ? t("stat.freezes.max") : t("stat.freezes.in", s.freezeIn)}</small></div>
   ${s.trophies ? `<div class="stat trophy" title="${t("stat.trophies.tip")}"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
 </section>
 ${weekStrip(ctx, s)}
@@ -487,6 +487,8 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
     <label>${t("settings.lang")} <select name="lang"><option value="ja" ${lang === "ja" ? "selected" : ""}>日本語</option><option value="en" ${lang === "en" ? "selected" : ""}>English</option></select></label>
     <fieldset><legend>${t("settings.notify")}</legend>
       ${chk("hit")}
+      ${chk("soon")}
+      <label class="lead">${t("settings.lead")} <select name="notifyLead">${[1, 3, 5, 10, 15].map((n) => `<option value="${n}" ${n === (user.notify_lead ?? 5) ? "selected" : ""}>${t("settings.leadUnit", n)}</option>`).join("")}</select></label>
       ${chk("reset")}
       ${chk("late")}
       ${chk("pinch")}

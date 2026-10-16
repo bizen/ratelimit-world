@@ -82,6 +82,8 @@ export const T = {
     "stat.streak": "日連続",
     "stat.freezes": "フリーズ",
     "stat.freezes.tip": "7日続けるごとに1つ。最大2つ",
+    "stat.freezes.in": (n) => `あと${n}日で +1`,
+    "stat.freezes.max": "最大（2つ）",
     "stat.weekXp": "今週の XP",
     "stat.trophies": "週間制覇",
     "stat.trophies.tip": "週間リミットを使い切った回数",
@@ -189,7 +191,10 @@ export const T = {
     "settings.lang": "言語",
     "settings.notify": "通知",
     "notify.hit": "枠や週間リミットを使い切ったとき（+XP）",
+    "notify.soon": "リセットの少し前",
     "notify.reset": "リセットした瞬間",
+    "settings.lead": "「もうすぐリセット」を送るタイミング",
+    "settings.leadUnit": (n) => `${n}分前`,
     "notify.late": "リセットから10分たっても再開していないとき",
     "notify.pinch": "ピンチ（指定時刻に目標未達）",
     "notify.goal": "目標達成",
@@ -380,6 +385,8 @@ export const T = {
     "stat.streak": "day streak",
     "stat.freezes": "freezes",
     "stat.freezes.tip": "One for every 7 days in a row. Up to 2",
+    "stat.freezes.in": (n) => `+1 in ${n} day${n === 1 ? "" : "s"}`,
+    "stat.freezes.max": "max (2)",
     "stat.weekXp": "XP this week",
     "stat.trophies": "weekly maxed",
     "stat.trophies.tip": "Times you used up a weekly limit",
@@ -487,7 +494,10 @@ export const T = {
     "settings.lang": "Language",
     "settings.notify": "Notifications",
     "notify.hit": "When I use up a window or weekly limit (+XP)",
+    "notify.soon": "Shortly before a reset",
     "notify.reset": "The moment a window resets",
+    "settings.lead": "When to send \"resets soon\"",
+    "settings.leadUnit": (n) => `${n} min before`,
     "notify.late": "When I haven't restarted 10 minutes after a reset",
     "notify.pinch": "Reminder (goal not met by the reminder time)",
     "notify.goal": "Goal reached",
@@ -643,6 +653,12 @@ export function fmtWhen(lang, ms, tz) {
 
 // ---------- スマホ通知の文面 (キャラクターの口調) ----------
 const pushJa = {
+  soon(tool, s, { minutes, at }) {
+    return {
+      title: `⏳ あと${minutes}分で ${TOOL[tool]} がリセット`,
+      body: `${at} にリセット。今のうちに次にやることを用意しておこう。今日 ${s.todayCount}/${s.goal} 枠`,
+    };
+  },
   reset(tool, s, { next, nextXp, nextTier }) {
     const left = Math.max(0, s.goal - s.todayCount);
     return {
@@ -689,6 +705,12 @@ const pushJa = {
 };
 
 const pushEn = {
+  soon(tool, s, { minutes, at }) {
+    return {
+      title: `⏳ ${TOOL[tool]} resets in ${minutes} min`,
+      body: `Resets at ${at}. Get your next task ready now. Today ${s.todayCount}/${s.goal}`,
+    };
+  },
   reset(tool, s, { next, nextXp, nextTier }) {
     const left = Math.max(0, s.goal - s.todayCount);
     return {

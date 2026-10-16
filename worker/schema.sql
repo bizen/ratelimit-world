@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   tz TEXT NOT NULL DEFAULT 'UTC',
   goal INTEGER NOT NULL DEFAULT 1,
   remind_at TEXT NOT NULL DEFAULT '21:00',         -- ピンチ通知の時刻 (ユーザーのタイムゾーン)
+  notify_lead INTEGER NOT NULL DEFAULT 5,          -- リセットの何分前に「もうすぐリセット」を送るか
   notify TEXT NOT NULL DEFAULT '{"hit":true,"reset":true,"late":true,"pinch":true,"goal":true}',
   public INTEGER NOT NULL DEFAULT 1,
   claude_statusline INTEGER NOT NULL DEFAULT 0, -- Claude Code のステータスラインを中継して使用率を読むか (オン/オフ)
