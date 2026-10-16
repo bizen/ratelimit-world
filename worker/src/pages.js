@@ -171,6 +171,10 @@ function weekStrip(ctx, s) {
     if (!prev && !next) continue; // 1日だけは帯にしない
     d.run = prev && next ? "run-mid" : prev ? "run-end" : "run-start";
   }
+  // 今日 (または昨日から今日) につながっている帯だけが今のストリーク。それ以外の帯は過去のものとして落ち着いた色に
+  const current = new Set();
+  for (let j = 6; j >= 0 && inRun(days[j]); j--) current.add(j);
+  days.forEach((d, j) => { if (d.run && !current.has(j)) d.run += " past"; });
   let out = "";
   for (const d of days) {
     // 丸の中はその日に使い切った枠の数。達成などは枠線の色で表す (光らせない)
@@ -409,8 +413,8 @@ export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify }) {
     body: `
 <section class="stats-row" aria-label="${t("dash.stats")}">
   <div class="stat flame"><b>${s.streak}</b><span>${t("stat.streak")}</span></div>
-  <div class="stat ice" title="${t("stat.freezes.tip")}"><b>${s.freezes}</b><span>${t("stat.freezes")}</span></div>
   <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>${t("stat.weekXp")}</span></div>
+  <div class="stat ice" title="${t("stat.freezes.tip")}"><b>${s.freezes}</b><span>${t("stat.freezes")}</span></div>
   ${s.trophies ? `<div class="stat trophy" title="${t("stat.trophies.tip")}"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
 </section>
 ${weekStrip(ctx, s)}
@@ -538,8 +542,18 @@ export function welcome(ctx, { origin, vapidKey }) {
     <h1 class="h1">${t("wel.goal.h")}</h1>
     <p data-suggest>${t("wel.goal.p")}</p>
     <div class="goals">
-      ${[1, 2, 3, 4, 6, 8].map((g) => `<button class="goal-card" data-goal-pick="${g}">
+      ${[1, 2, 3, 4, 5, 6, 7, 8].map((g) => `<button class="goal-card" data-goal-pick="${g}" aria-pressed="false">
         <span class="goal-n">${g}<small>${t("unit")}</small></span><span class="goal-name">${t(`goal.${g}.name`)}</span><span class="goal-desc">${t(`goal.${g}.desc`)}</span></button>`).join("")}
+    </div>
+    <div class="goal-preview" data-goal-preview hidden aria-live="polite">
+      <p class="gp-level" data-gp="level"></p>
+      <div class="gp-stats">
+        <div><b data-gp="hours"></b><span>${t("gp.hours")}</span></div>
+        <div><b data-gp="xp"></b><span>${t("gp.xp")}</span></div>
+        <div><b data-gp="week"></b><span>${t("gp.week")}</span></div>
+      </div>
+      <p class="gp-note" data-gp="note"></p>
+      <button class="btn big" data-goal-confirm>${t("gp.confirm")}</button>
     </div>
     <p class="muted small">${t("wel.goal.note")}</p>
   </div>

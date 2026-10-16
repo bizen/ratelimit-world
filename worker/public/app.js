@@ -300,24 +300,47 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       $("[data-suggest]", root).textContent = T("c.suggest", { typical: history.typicalDay, best: history.bestDay });
     }
     markGoal();
+    if (chosen) preview(goal); // 戻ってきたときは、選んでいた目標の説明をそのまま出す
   }
   function markGoal() {
     // 一度選んだあとに戻ってきたら、その目標を選択済みにしておく
     for (const c of $$("[data-goal-pick]", root)) c.classList.toggle("selected", chosen && +c.dataset.goalPick === goal);
   }
   let chosen = false;
+  // 目標を選ぶと、その目標が「どのくらいか」を見せる。確定ボタンで保存して次へ
+  const COMBO = [100, 120, 150, 200, 300];
+  const dayXp = (n) => Array.from({ length: n }, (_, i) => COMBO[Math.min(i, COMBO.length - 1)]).reduce((a, b) => a + b, 0);
+  function preview(n) {
+    const box = $("[data-goal-preview]", root);
+    const set = (k, v) => ($(`[data-gp="${k}"]`, box).textContent = v);
+    set("level", T("c.gpLevel", { n, level: T(`c.gpLevel${n}`) }));
+    set("hours", T("c.gpHours", { h: n * 5 }));
+    set("xp", `+${dayXp(n).toLocaleString()} XP`);
+    set("week", T("c.gpHours", { h: n * 5 * 7 }));
+    const notes = [];
+    const typical = history?.activeDays ? history.typicalDay : null;
+    if (typical) notes.push(n > typical ? T("c.gpMore", { x: Math.round((n / typical) * 10) / 10 }) : n === typical ? T("c.gpSame") : T("c.gpLess"));
+    if (n >= 7) notes.push(T("c.gpAllDay"));
+    else if (n >= 5) notes.push(T("c.gpBoth"));
+    set("note", notes.join(" "));
+    box.hidden = false;
+    if (!calm) box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
   for (const b of $$("[data-goal-pick]", root)) {
-    b.addEventListener("click", async () => {
+    b.addEventListener("click", () => {
       goal = +b.dataset.goalPick;
       chosen = true;
       markGoal();
-      b.classList.add("picked");
-      setTimeout(() => b.classList.remove("picked"), 400);
-      // ブラウザのタイムゾーンもここで保存する
-      await post("/api/settings", { goal: +b.dataset.goalPick, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
-      setTimeout(() => show(3), calm ? 0 : 260);
+      for (const c of $$("[data-goal-pick]", root)) c.setAttribute("aria-pressed", String(c === b));
+      preview(goal);
     });
   }
+  $("[data-goal-confirm]", root)?.addEventListener("click", async () => {
+    if (!chosen) return;
+    // ブラウザのタイムゾーンもここで保存する
+    await post("/api/settings", { goal, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    show(3);
+  });
 
   for (const b of $$("[data-next]", root)) b.addEventListener("click", () => show(+b.dataset.next));
   // 戻る操作はブラウザの履歴を 1つ戻すのと同じにする (履歴が 1 → 2 → 3 の一直線のまま保たれる)
