@@ -438,7 +438,7 @@ export const T = {
     "dial.left": "",
     "dial.time": "time",
     "dial.raceAria": (r, e) => `${r}% left, ${e}% of the window elapsed`,
-    "dial.remain": "left",
+    "dial.remain": "LEFT",
     "dial.week": "Weekly",
     "dial.weekReset": (when) => `resets ${when}`,
     "dial.started": "Started",
