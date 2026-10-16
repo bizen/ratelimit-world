@@ -70,10 +70,58 @@ function* walkJsonl(dir, sinceMs) {
   }
 }
 
-function* lines(file) {
-  let text;
-  try { text = fs.readFileSync(file, "utf8"); } catch { return; }
-  for (const line of text.split("\n")) if (line) yield line;
+// 1行ずつ読む。ログは数百MBになることがあり (Node の文字列は約512MBが上限)、
+// 丸ごと読むと失敗して黙って飛ばしてしまうので、8MBずつ読む
+const CHUNK = 8 << 20;
+const MAX_LINE = 256 << 20;
+function* lines(file, startAt = 0) {
+  let fd;
+  try { fd = fs.openSync(file, "r"); } catch { return; }
+  try {
+    const buf = Buffer.alloc(CHUNK);
+    let pos = startAt, rest = null;
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, CHUNK, pos);
+      if (n <= 0) break;
+      pos += n;
+      const chunk = rest ? Buffer.concat([rest, buf.subarray(0, n)]) : buf.subarray(0, n);
+      let start = 0, i;
+      while ((i = chunk.indexOf(10, start)) !== -1) {
+        if (i > start) yield chunk.toString("utf8", start, i);
+        start = i + 1;
+      }
+      rest = start < chunk.length ? Buffer.from(chunk.subarray(start)) : null;
+      if (rest && rest.length > MAX_LINE) rest = null; // 異常に長い 1行はあきらめる
+    }
+    if (rest?.length) yield rest.toString("utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Codex のログは各行が {"timestamp":"..."} で始まり、時刻順に並ぶ。
+// 大きなファイルは二分探索で「sinceMs 以降」が始まるあたりから読む (毎ターンの送信を速くするため)
+function offsetSince(file, sinceMs) {
+  let fd, size;
+  try { fd = fs.openSync(file, "r"); size = fs.fstatSync(fd).size; } catch { return 0; }
+  try {
+    if (size < 32 << 20) return 0;
+    const b = Buffer.alloc(256 << 10);
+    let lo = 0, hi = size;
+    while (hi - lo > 4 << 20) {
+      const mid = Math.floor((lo + hi) / 2);
+      const n = fs.readSync(fd, b, 0, b.length, mid);
+      const s = b.toString("utf8", 0, n);
+      const nl = s.indexOf("\n");
+      const m = nl >= 0 ? s.slice(nl + 1, nl + 80).match(/^\{"timestamp":"([^"]+)"/) : null;
+      const ts = m ? Date.parse(m[1]) : NaN;
+      if (!Number.isFinite(ts)) break; // 判断できなければ、そこまでの安全な位置から読む
+      if (ts < sinceMs) lo = mid; else hi = mid;
+    }
+    return lo;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 const parseLine = (line) => { try { return JSON.parse(line); } catch { return null; } };
@@ -191,7 +239,7 @@ export function scanCodex(sinceMs) {
   let current = null;
   for (const file of walkJsonl(path.join(codexDir(), "sessions"), sinceMs)) {
     let model = null; // そのターンのモデルは直前の turn_context に書かれる
-    for (const line of lines(file)) {
+    for (const line of lines(file, offsetSince(file, sinceMs))) {
       if (line.startsWith('{"timestamp"') && line.includes('"type":"turn_context"')) {
         model = parseLine(line)?.payload?.model ?? model;
       } else if (line.includes('"token_count"')) {
@@ -208,9 +256,10 @@ export function scanCodex(sinceMs) {
         if (wk && wreset && Number(wk.used_percent) >= 100) weekly.push({ ts, reset: wreset });
         // input_tokens はキャッシュ分を含み、output_tokens は推論分を含む (OpenAI の数え方)
         const u = p.info?.last_token_usage;
-        if (u && model && (u.input_tokens || u.output_tokens)) {
+        // 途中から読んだ場合など、モデルが分からなければ不明扱い (料金はサーバー側で近いモデルで推定)
+        if (u && (u.input_tokens || u.output_tokens)) {
           const cached = u.cached_input_tokens || 0;
-          usage.push({ ts, model, t: [Math.max(0, (u.input_tokens || 0) - cached), u.cache_write_input_tokens || 0, 0, cached, u.output_tokens || 0] });
+          usage.push({ ts, model: model ?? "codex-unknown", t: [Math.max(0, (u.input_tokens || 0) - cached), u.cache_write_input_tokens || 0, 0, cached, u.output_tokens || 0] });
         }
       } else if (line.includes('"task_started"')) {
         const ev = parseLine(line);
