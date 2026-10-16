@@ -27,7 +27,7 @@ crons = ["* * * * *"]
 [vars]
 VAPID_SUBJECT = "mailto:hello@ratelimit.world"
 # 正式なドメイン。設定すると workers.dev で開いたページはここへ移り、PC の CLI も送り先を切り替える
-# CANONICAL_ORIGIN = "https://ratelimit.world"
+CANONICAL_ORIGIN = "https://ratelimit.world"
 # ローカル開発用。本番では .dev.vars に書かず、未設定のままにする
 # DEV_LOGIN = "1"
 
