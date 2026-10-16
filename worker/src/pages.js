@@ -346,13 +346,13 @@ function dial(ctx, tool, s, now) {
   // 使用率が分かるとき: リング = 使用率。間に合うペースかどうかは下の一文で伝える (緑 = 間に合う / オレンジ = 余る)。
   // 分からないとき: リング = リセットまでの残り時間
   const raceOn = start != null && usedPct != null;
-  let frac = 0, elapsed = 0, ahead = true;
+  let frac = 0, elapsed = 0, ahead = true, pace = null;
   if (raceOn) {
     const r = race(usedPct, start, now);
     elapsed = r.elapsed / 100;
     ahead = usedPct >= r.elapsed;
     frac = usedPct / 100;
-    if (state === "using") sub = r.maxAt ? t("c.paceMax", { t: localTime(r.maxAt, s.tz) }) : t("c.paceShort", { p: Math.min(100, r.pctAtReset) });
+    if (state === "using") pace = r.maxAt ? { ok: true, detail: t("c.paceMaxAt", { t: localTime(r.maxAt, s.tz) }) } : { ok: false, detail: t("c.paceShortAt", { p: Math.min(100, r.pctAtReset) }) };
   } else if (resetAt) frac = Math.min(1, Math.max(0, (resetAt - now) / WINDOW_MS));
   if (state === "weekly") frac = 1;
   return `
@@ -370,7 +370,9 @@ function dial(ctx, tool, s, now) {
         : `<small>${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b>`}
     </div>
   </div>
-  <p class="dial-sub ${raceOn && state === "using" ? (ahead ? "pace-ok" : "pace-short") : ""}">${esc(sub)}</p>
+  ${pace
+    ? `<div class="pace ${pace.ok ? "ok" : "short"}" data-pace><b>${t(pace.ok ? "c.paceOk" : "c.paceBad")}</b><span>${esc(pace.detail)}</span></div>`
+    : `<p class="dial-sub">${esc(sub)}</p>`}
   ${dialFoot(ctx, tool, s, now, state === "limited" ? resetAt : null)}
 </article>`;
 }

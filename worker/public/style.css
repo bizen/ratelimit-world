@@ -533,3 +533,12 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .tasks:not([open]) > summary { gap: 8px; }
 .tasks:not([open]) .brief { font-size: 12px; }
 .tasks .chev { flex: none; }
+
+/* ペースの箱: 間に合う = 緑 / 余る = 赤。どちらのツールの枠の上でも見えるよう、背景色ではっきり分ける */
+.pace { margin: 10px 4px 0; padding: 8px 10px; border-radius: 12px; color: #fff; display: grid; gap: 1px; text-align: center; }
+.pace b { font: 700 14px var(--body); }
+.pace span { font: 700 12px var(--mono); opacity: .92; }
+.pace.ok { background: #16A34A; box-shadow: 0 3px 0 #0F7A37; }
+.pace.short { background: #DC2626; box-shadow: 0 3px 0 #A31B1B; }
+.dial.tool-claude .pace { border: 2px solid rgb(255 255 255 / .55); }
+.pace b, .pace span { white-space: nowrap; }

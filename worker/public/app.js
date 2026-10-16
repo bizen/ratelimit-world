@@ -33,10 +33,14 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
         if (d.classList.contains("using") && pct > 0) {
           const at = start + ((now - start) * 100) / pct;
           const hm = (ms) => new Intl.DateTimeFormat("en-GB", { timeZone: d.dataset.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
-          const sub = $(".dial-sub", d);
-          sub.textContent = at <= reset ? T("c.paceMax", { t: hm(at) }) : T("c.paceShort", { p: Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
-          sub.classList.toggle("pace-ok", at <= reset);
-          sub.classList.toggle("pace-short", at > reset);
+          const box = $("[data-pace]", d);
+          if (box) {
+            const ok = at <= reset;
+            box.classList.toggle("ok", ok);
+            box.classList.toggle("short", !ok);
+            $("b", box).textContent = T(ok ? "c.paceOk" : "c.paceBad");
+            $("span", box).textContent = ok ? T("c.paceMaxAt", { t: hm(at) }) : T("c.paceShortAt", { p: Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
+          }
         }
       } else if (d.classList.contains("limited") || d.classList.contains("using")) {
         const fill = $(".fill", d);
