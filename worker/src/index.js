@@ -17,7 +17,7 @@ const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", ...headers } });
 const html = (body, status = 200, headers = {}) =>
   new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...headers } });
-const redirect = (to, headers = {}) => new Response(null, { status: 302, headers: { location: to, ...headers } });
+const redirect = (to, headers = {}, status = 302) => new Response(null, { status, headers: { location: to, ...headers } });
 
 const randomToken = (bytes = 32) => b64u(crypto.getRandomValues(new Uint8Array(bytes)));
 async function sha256(s) {
@@ -459,6 +459,8 @@ async function handleSync(req, env) {
   }
   return json({
     ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak, lang: user.lang ?? null, statusline: !!user.claude_statusline,
+    // 正式なドメインに移ったら、PC の CLI に送り先を切り替えてもらう
+    ...(env.CANONICAL_ORIGIN ? { server: env.CANONICAL_ORIGIN } : {}),
     // PC のステータスライン・メニューバー用 (PC 側が保存し、残り時間はその場で計算する)
     status: { streak: s.streak, today: s.todayCount, goal: s.goal, tools: { claude: toolStatus(s, "claude", now), codex: toolStatus(s, "codex", now) } },
   });
@@ -751,6 +753,13 @@ async function route(req, env) {
   const p = url.pathname;
   const m = req.method;
   const origin = url.origin;
+
+  // 正式なドメイン (CANONICAL_ORIGIN) ができたら、古いアドレス (workers.dev) で開いたページはそちらへ移す。
+  // PC の CLI が使う API とインストール用のファイル、ログインの途中 (/auth/) は古いアドレスのままでも動かす
+  const canonical = env.CANONICAL_ORIGIN;
+  if (canonical && origin !== canonical && (m === "GET" || m === "HEAD") && !/^\/(api|auth)\//.test(p) && p !== "/install.sh") {
+    return redirect(canonical + p + url.search, {}, 301);
+  }
 
   if (p === "/api/sync" && m === "POST") return handleSync(req, env);
   if (p === "/api/cli/start" && m === "POST") return cliStart(req, env);

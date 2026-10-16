@@ -460,6 +460,11 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
     const r = await api(cfg, "POST", "/api/sync", payload);
     // サイトで選んでいる言語に表示を合わせる
     saveConfig({ ...loadConfig(), lastSyncAt: Date.now(), ...(r.lang ? { lang: r.lang } : {}) });
+    // サイトが正式なドメインに移ったら、送り先を切り替える (仮のアドレス *.workers.dev から ratelimit.world へだけ)
+    if (r.server === DEFAULT_SERVER && cfg.server !== DEFAULT_SERVER && /\.workers\.dev$/.test(new URL(cfg.server).hostname)) {
+      saveConfig({ ...loadConfig(), server: DEFAULT_SERVER });
+      log(`server moved to ${DEFAULT_SERVER}`);
+    }
     if (r.status) writeJson(STATUS_FILE, { ...r.status, at: Date.now() });
     // ダッシュボードの「Claude Code の使用率も表示する」に合わせて、ステータスラインの中継を入れる / 外す
     if (typeof r.statusline === "boolean" && r.statusline !== !!loadConfig().statusline) {
