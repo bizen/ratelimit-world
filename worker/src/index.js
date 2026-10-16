@@ -311,7 +311,7 @@ async function handleSync(req, env) {
     .bind(tz, claudePlan, codexPlan, JSON.stringify(nextReset), now, user.id));
   await env.DB.batch(stmts);
 
-  const fresh = { ...user, tz };
+  const fresh = { ...user, tz, next_reset: JSON.stringify(nextReset) };
   const s = await statsFor(env, fresh, now);
   const prefs = parseNotify(fresh);
   // 週間リミットに当たったばかりなら、いちばん大きなごほうびを知らせる
@@ -327,7 +327,24 @@ async function handleSync(req, env) {
   } else if (s.todayDone && prefs.goal && (await claim(env, user.id, `goal:${s.today}`))) {
     await pushToUser(env, user.id, notice(fresh, "goal", s, now));
   }
-  return json({ ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak, lang: user.lang ?? null, statusline: !!user.claude_statusline });
+  return json({
+    ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak, lang: user.lang ?? null, statusline: !!user.claude_statusline,
+    // PC のステータスライン・メニューバー用 (PC 側が保存し、残り時間はその場で計算する)
+    status: { streak: s.streak, today: s.todayCount, goal: s.goal, tools: { claude: toolStatus(s, "claude", now), codex: toolStatus(s, "codex", now) } },
+  });
+}
+
+// ツールの今の状態 (ダイヤルと同じ考え方): weekly / limited / using / ready / idle
+function toolStatus(s, tool, now) {
+  const lock = s.weeklyLocks.find((w) => w.tool === tool);
+  if (lock) return { state: "weekly", resetAt: lock.resetAt };
+  const lim = s.tools[tool];
+  if (lim?.state === "limited") return { state: "limited", resetAt: lim.resetAt, pct: 100 };
+  const r = s.nextReset?.[tool];
+  if (r?.resetAt > now) return { state: "using", resetAt: r.resetAt, pct: r.pct ?? null, exact: !!r.exact };
+  const last = s.lastReset[tool];
+  if (last && last.resumed_at == null && now - last.reset_at < 3 * HOUR) return { state: "ready", since: last.reset_at };
+  return { state: "idle" };
 }
 
 // ---------- CLI ログイン (デバイスフロー) ----------

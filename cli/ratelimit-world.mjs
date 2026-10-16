@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +24,7 @@ const CONFIG_FILE = path.join(HOME, "config.json");
 const INSTALLED_SCRIPT = path.join(HOME, "ratelimit-world.mjs");
 const LOG_FILE = path.join(HOME, "sync.log");
 const CLAUDE_USAGE_FILE = path.join(HOME, "claude-usage.json"); // ステータスラインの中継で受け取った使用率
+const STATUS_FILE = path.join(HOME, "status.json");             // 送信の返事 (ストリーク・ツールの状態)。ステータスライン・メニューバー用
 const SELF = fileURLToPath(import.meta.url);
 
 const HOUR = 3600 * 1000;
@@ -459,6 +460,7 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
     const r = await api(cfg, "POST", "/api/sync", payload);
     // サイトで選んでいる言語に表示を合わせる
     saveConfig({ ...loadConfig(), lastSyncAt: Date.now(), ...(r.lang ? { lang: r.lang } : {}) });
+    if (r.status) writeJson(STATUS_FILE, { ...r.status, at: Date.now() });
     // ダッシュボードの「Claude Code の使用率も表示する」に合わせて、ステータスラインの中継を入れる / 外す
     if (typeof r.statusline === "boolean" && r.statusline !== !!loadConfig().statusline) {
       try { setStatusline(r.statusline); log(`statusline relay ${r.statusline ? "on" : "off"}`); } catch (e) { log(`statusline: ${e.message}`); }
@@ -592,20 +594,115 @@ async function statusline() {
   let data = null;
   try { data = JSON.parse(input); } catch {}
   try { recordClaudeUsage(data); } catch {}
+  const seg = statusSegment(data?.rate_limits);
   const prev = loadConfig().prevClaudeStatusLine;
   if (prev?.command) {
-    const child = spawn(prev.command, { shell: true, stdio: ["pipe", "inherit", "inherit"] });
-    child.on("error", () => {});
-    child.stdin.on("error", () => {});
-    child.stdin.end(input);
-    await new Promise((r) => child.on("close", r));
+    // 元のステータスラインの出力の後ろに、ratelimit.world の 1区切りを足す
+    const out = await new Promise((resolve) => {
+      const child = spawn(prev.command, { shell: true, stdio: ["pipe", "pipe", "inherit"] });
+      let buf = "";
+      child.stdout.on("data", (d) => (buf += d));
+      child.on("error", () => resolve(buf));
+      child.on("close", () => resolve(buf));
+      child.stdin.on("error", () => {});
+      child.stdin.end(input);
+    });
+    const text = out.replace(/\s+$/, "");
+    process.stdout.write(text && seg ? `${text} │ ${seg}` : text || seg);
     return;
   }
-  // 元のステータスラインがない人には、使用率を短く出す
-  const rl = data?.rate_limits;
-  const f = (x, label) => (x?.used_percentage != null ? `${label} ${Math.round(x.used_percentage)}%` : null);
-  const parts = [f(rl?.five_hour, "5h"), f(rl?.seven_day, L("週", "week"))].filter(Boolean);
-  if (parts.length) process.stdout.write(`🔥 ${parts.join(" · ")}`);
+  if (seg) process.stdout.write(seg);
+}
+
+// ---------- PC で常に目に入る表示 (ステータスライン・メニューバー) ----------
+// 残り時間: 3h52m / 12m / <1m
+const dur = (ms) => {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m < 1) return "<1m";
+  return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+};
+const hm = (ms) => new Date(ms).toTimeString().slice(0, 5);
+const NAMES = { claude: "Claude", codex: "Codex" };
+
+// 保存してある状態に、今の時刻を当てはめる (リセット時刻を過ぎていれば「再開待ち」)
+function liveTools(liveClaude) {
+  const st = readJson(STATUS_FILE, null);
+  if (!st) return null;
+  const now = Date.now();
+  const tools = { ...st.tools };
+  // Claude Code は中継で受け取ったばかりの値があれば、そちらが新しい
+  const five = liveClaude?.five_hour;
+  const cr = five ? toMs(five.resets_at) : null;
+  if (cr && cr > now && tools.claude?.state !== "weekly" && tools.claude?.state !== "limited") {
+    tools.claude = { state: "using", resetAt: cr, pct: Number(five.used_percentage), exact: true };
+  }
+  for (const [k, t] of Object.entries(tools)) {
+    if ((t.state === "limited" || t.state === "using" || t.state === "weekly") && t.resetAt <= now) tools[k] = { state: "ready", since: t.resetAt };
+  }
+  return { ...st, tools, now };
+}
+
+function statusSegment(liveClaude) {
+  const st = liveTools(liveClaude);
+  if (!st) return "";
+  const parts = [`🔥${st.streak} ${st.today}/${st.goal}${L("枠", "")}`];
+  for (const tool of ["claude", "codex"]) {
+    const t = st.tools[tool];
+    if (!t || t.state === "idle") continue;
+    if (t.state === "ready") parts.push(`${NAMES[tool]} ⚡GO`);
+    else if (t.state === "weekly") parts.push(`${NAMES[tool]} 🏆${dur(t.resetAt - st.now)}`);
+    else parts.push(`${NAMES[tool]}${t.pct != null ? ` ${Math.round(t.pct)}%` : ""} ⏳${t.exact === false ? "~" : ""}${dur(t.resetAt - st.now)}`);
+  }
+  return parts.join(" · ");
+}
+
+// SwiftBar のプラグインとして 1分ごとに呼ばれ、メニューバーの表示を出す
+function menubar() {
+  const cfg = loadConfig();
+  const st = liveTools(null);
+  if (!st) {
+    console.log(`🔥\n---\n${L("まだ記録がありません。Claude Code か Codex を使うと表示されます", "No data yet. Use Claude Code or Codex to see it here")}`);
+    return;
+  }
+  const tools = ["claude", "codex"].map((k) => [k, st.tools[k]]).filter(([, t]) => t);
+  const ready = tools.some(([, t]) => t.state === "ready");
+  const timed = tools.filter(([, t]) => t.resetAt > st.now && t.state !== "weekly").map(([, t]) => t.resetAt).sort((a, b) => a - b);
+  const title = ready ? `🔥${st.streak} ⚡GO` : timed.length ? `🔥${st.streak} ⏳${dur(timed[0] - st.now)}` : `🔥${st.streak}`;
+  const lines = [title, "---", L(`🔥 ${st.streak}日連続 · 今日 ${st.today}/${st.goal} 枠`, `🔥 ${st.streak}-day streak · today ${st.today}/${st.goal}`)];
+  for (const [tool, t] of tools) {
+    const name = tool === "claude" ? "Claude Code" : "Codex";
+    const pct = t.pct != null ? ` ${Math.round(t.pct)}%` : "";
+    if (t.state === "ready") lines.push(L(`${name}  ⚡ リセット済み — 今すぐ再開`, `${name}  ⚡ reset — restart now`) + " | color=#16A34A");
+    else if (t.state === "weekly") lines.push(L(`${name}  🏆 週間リミット中（${new Date(t.resetAt).toLocaleString()} まで）`, `${name}  🏆 weekly limit (until ${new Date(t.resetAt).toLocaleString()})`));
+    else if (t.state === "idle") lines.push(L(`${name}  待機中`, `${name}  idle`));
+    else lines.push(L(`${name}${pct}  ${hm(t.resetAt)} にリセット（あと ${dur(t.resetAt - st.now)}${t.exact === false ? "・推定" : ""}）`, `${name}${pct}  resets ${hm(t.resetAt)} (in ${dur(t.resetAt - st.now)}${t.exact === false ? ", est." : ""})`));
+  }
+  lines.push("---");
+  if (cfg.server) lines.push(`${L("ダッシュボードを開く", "Open dashboard")} | href=${cfg.server}/me`);
+  lines.push(`${L("今すぐ送信", "Sync now")} | bash=${process.execPath} param1=${INSTALLED_SCRIPT} param2=sync param3=--quiet terminal=false refresh=true`);
+  lines.push(`${L("最終更新", "Updated")} ${hm(st.at)} | size=11`);
+  console.log(lines.join("\n"));
+}
+
+// SwiftBar のプラグインフォルダに、1分ごとに更新するプラグインを置く
+function menubarInstall() {
+  let dir = null;
+  try { dir = execFileSync("defaults", ["read", "com.ameba.SwiftBar", "PluginDirectory"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch {}
+  if (!dir) {
+    dir = path.join(HOME, "swiftbar");
+    execFileSync("defaults", ["write", "com.ameba.SwiftBar", "PluginDirectory", dir]);
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "ratelimit-world.1m.sh");
+  fs.writeFileSync(file, `#!/bin/sh
+# <swiftbar.title>ratelimit.world</swiftbar.title>
+# <swiftbar.hideAbout>true</swiftbar.hideAbout>
+# <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
+# <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>
+exec "${process.execPath}" "${INSTALLED_SCRIPT}" menubar
+`);
+  fs.chmodSync(file, 0o755);
+  console.log(L(`✅ メニューバーのプラグインを置きました (${file})。SwiftBar を起動すると表示されます`, `✅ Added the menu bar plugin (${file}). Launch SwiftBar to see it`));
 }
 
 // config.toml の最上位にある 1行の notify = [...] を読み書きする (TOML パーサーは持たない)
@@ -719,6 +816,11 @@ function printHistory(windows) {
 
 function uninstall() {
   try { setStatusline(false); } catch {}
+  // メニューバー (SwiftBar) のプラグインも外す
+  try {
+    const dir = execFileSync("defaults", ["read", "com.ameba.SwiftBar", "PluginDirectory"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    fs.rmSync(path.join(dir, "ratelimit-world.1m.sh"), { force: true });
+  } catch {}
   const cfg = loadConfig();
   removeClaudeHooks();
   removeCodexNotify(cfg);
@@ -755,12 +857,13 @@ if (isMain) {
     else if (cmd === "sync") process.exitCode = (await sync({ full: argv.includes("--full"), quiet: argv.includes("--quiet"), reason: flag("--reason") || "manual", active: flag("--active") })) ? 0 : 1;
     else if (cmd === "hook") hook(argv[1], argv[2], argv.slice(3));
     else if (cmd === "statusline") await statusline();
+    else if (cmd === "menubar") (argv[1] === "install" ? menubarInstall() : menubar());
     else if (cmd === "scan") console.log(JSON.stringify(collect(Number(flag("--days")) || 7), null, 2));
     else if (cmd === "status") status();
     else if (cmd === "uninstall") uninstall();
     else console.log(L(
-      `ratelimit-world ${VERSION}\n\n  setup [--server URL]  ログインして hooks を登録\n  sync [--full]         今すぐ送信\n  status                直近の到達と送信状況\n  scan [--days N]       送る内容を表示 (通信なし)\n  uninstall             hooks を外して削除`,
-      `ratelimit-world ${VERSION}\n\n  setup [--server URL]  log in and add hooks\n  sync [--full]         send now\n  status                recent limits and sync status\n  scan [--days N]       show what would be sent (no network)\n  uninstall             remove hooks and delete local data`));
+      `ratelimit-world ${VERSION}\n\n  setup [--server URL]  ログインして hooks を登録\n  sync [--full]         今すぐ送信\n  status                直近の到達と送信状況\n  menubar install       Mac のメニューバー (SwiftBar) に表示\n  scan [--days N]       送る内容を表示 (通信なし)\n  uninstall             hooks を外して削除`,
+      `ratelimit-world ${VERSION}\n\n  setup [--server URL]  log in and add hooks\n  sync [--full]         send now\n  status                recent limits and sync status\n  menubar install       show in the Mac menu bar (SwiftBar)\n  scan [--days N]       show what would be sent (no network)\n  uninstall             remove hooks and delete local data`));
   } catch (e) {
     // hook から呼ばれたときに Claude Code / Codex を止めないよう、失敗は記録だけして終わる
     if (cmd === "hook" || cmd === "statusline") log(`${cmd} error: ${e.message}`);
