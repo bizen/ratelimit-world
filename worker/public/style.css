@@ -506,3 +506,7 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .slot.split.goal::after { z-index: 2; }
 .slot.split .half:first-child { border-radius: 13px 13px 0 0; }
 .slot.split .half:last-child { border-radius: 0 0 13px 13px; }
+/* 設定のチェック項目: 説明文つきでもチェックボックスと文字を横に並べる */
+.settings label.toggle { flex-wrap: nowrap; }
+.settings label.toggle > span { flex: 1; min-width: 0; }
+.settings label.toggle input { flex: none; margin-top: 3px; }
