@@ -203,11 +203,19 @@ function heatmap(ctx, s, days = 28) {
   return `<div class="heat" role="img" aria-label="${t("heat.aria", days)}">${cells}</div>`;
 }
 
-// 次のリセット時刻。リミット中ならその正確な時刻、使用中なら PC から届いた予定 (Claude Code は推定)
-function nextResetText(ctx, tool, s, now, limitedAt) {
+// 今の 5時間枠: 左に開始 (= 次のリセットの 5時間前)、右に次のリセット。
+// リミット中ならその正確な時刻、使用中なら PC から届いた予定 (Claude Code は推定)
+function windowRow(ctx, tool, s, now, limitedAt) {
+  const { t } = ctx;
   const r = limitedAt ? { resetAt: limitedAt, exact: true } : s.nextReset?.[tool];
-  if (!(r?.resetAt > now)) return `<span class="none">${ctx.t("dial.noWindow")}</span>`;
-  return `${localTime(r.resetAt, s.tz)}${r.exact ? "" : `<small>${ctx.t("dial.estimated")}</small>`}`;
+  if (!(r?.resetAt > now)) {
+    return `<div><dt>${t("dial.nextReset")}</dt><dd><span class="none">${t("dial.noWindow")}</span></dd></div>`;
+  }
+  const est = r.exact ? "" : `<small>${t("dial.estimated")}</small>`;
+  return `<div class="pair">
+      <div><dt>${t("dial.started")}</dt><dd>${localTime(r.resetAt - WINDOW_MS, s.tz)}${est}</dd></div>
+      <div><dt>${t("dial.nextReset")}</dt><dd>${localTime(r.resetAt, s.tz)}${est}</dd></div>
+    </div>`;
 }
 
 // 週間枠の使用率 (正確な値が分かる Codex のみ)
@@ -263,7 +271,7 @@ function dial(ctx, tool, s, now) {
   </div>
   <p class="dial-sub">${esc(sub)}</p>
   <dl class="dial-foot">
-    <div><dt>${t("dial.nextReset")}</dt><dd>${nextResetText(ctx, tool, s, now, state === "limited" ? resetAt : null)}</dd></div>
+    ${windowRow(ctx, tool, s, now, state === "limited" ? resetAt : null)}
     ${weekRow(ctx, tool, s, now)}
     <div><dt>${t("dial.yesterday")}</dt><dd>${t("windows", s.yesterdayByTool[tool])}</dd></div>
     <div><dt>${t("dial.lastHit")}</dt><dd>${s.lastHitByTool[tool]
