@@ -188,26 +188,18 @@
     step = k;
     for (const el of $$(".step", root)) el.hidden = +el.dataset.step !== k;
     $$(".steps li", root).forEach((li, i) => li.classList.toggle("on", i < k));
-    $(`.step[data-step="${k}"] h1`, root)?.focus?.();
-    if (k === 2) poll();
+    if (k === 1) poll();
+    if (k === 2) suggest();
   };
   const post = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
 
-  // 1) 目標を選ぶ (ブラウザのタイムゾーンもここで保存する)
-  for (const b of $$("[data-goal-pick]", root)) {
-    b.addEventListener("click", async () => {
-      b.classList.add("picked");
-      await post("/api/settings", { goal: +b.dataset.goalPick, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
-      setTimeout(() => show(2), calm ? 0 : 260);
-    });
-  }
-
-  // 2) PC の連携を待つ。届いたら過去の記録を見せる
+  // 1) PC の連携を待つ。届いたら過去の記録を見せる
+  let history = null;
   let polling = false;
   async function poll() {
     if (polling) return;
     polling = true;
-    while (step === 2) {
+    while (step === 1) {
       const me = await fetch("/api/me").then((r) => r.json()).catch(() => null);
       if (me?.linked && me.lastSyncAt) { reveal(me.history); break; }
       await new Promise((r) => setTimeout(r, 2000));
@@ -222,6 +214,7 @@
     requestAnimationFrame(f);
   }
   function reveal(h) {
+    history = h;
     $("[data-link-wait]", root).hidden = true;
     $(".skip", root).hidden = true;
     $("[data-link-done]", root).hidden = false;
@@ -238,7 +231,30 @@
     burst(r.left + r.width / 2, r.top + r.height / 2, 50);
   }
 
-  for (const b of $$("[data-next]", root)) b.addEventListener("click", () => show(3));
+  // 2) 目標を選ぶ。過去の記録があれば「ふだんの1日」を目安としておすすめする (決めるのは本人)
+  function suggest() {
+    const typical = Math.min(4, Math.max(1, history?.typicalDay || 1));
+    for (const c of $$("[data-goal-pick]", root)) {
+      const rec = +c.dataset.goalPick === typical;
+      c.classList.toggle("rec", rec);
+      $(".goal-badge", c)?.remove();
+      if (rec) c.insertAdjacentHTML("afterbegin", '<span class="goal-badge">おすすめ</span>');
+    }
+    if (history?.activeDays) {
+      $("[data-suggest]", root).textContent = `あなたのふだんの1日は ${history.typicalDay} 枠、最多は ${history.bestDay} 枠でした。まずはふだんどおりの数から始めて、続けられたら上げましょう。`;
+    }
+  }
+  for (const b of $$("[data-goal-pick]", root)) {
+    b.addEventListener("click", async () => {
+      b.classList.add("picked");
+      // ブラウザのタイムゾーンもここで保存する
+      await post("/api/settings", { goal: +b.dataset.goalPick, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      setTimeout(() => show(3), calm ? 0 : 260);
+    });
+  }
+
+  for (const b of $$("[data-next]", root)) b.addEventListener("click", () => show(+b.dataset.next));
+  show(1);
   for (const b of $$("[data-finish]", root)) {
     b.addEventListener("click", async () => {
       await post("/api/onboarded");

@@ -204,7 +204,12 @@ async function handleSync(req, env) {
     ? JSON.stringify({ at: codex.at, resetAt: codex.resetAt, usedPercent: codex.usedPercent }) : user.codex_state;
   // タイムゾーンは設定画面で変えていなければ PC のものに合わせる
   const tz = user.tz === "UTC" && validTz(body.client?.tz) ? body.client.tz : user.tz;
-  stmts.push(env.DB.prepare("UPDATE users SET codex_state = ?, tz = ?, last_sync_at = ? WHERE id = ?").bind(codexState, tz, now, user.id));
+  // 課金プラン (ランキングを分けるのに使う)。読めなかったときは前の値を残す
+  const plan = (v, prev) => (typeof v === "string" && /^[a-z0-9_]{1,20}$/.test(v) ? v : prev);
+  const claudePlan = plan(body.plans?.claude, user.claude_plan);
+  const codexPlan = plan(body.plans?.codex, user.codex_plan);
+  stmts.push(env.DB.prepare("UPDATE users SET codex_state = ?, tz = ?, claude_plan = ?, codex_plan = ?, last_sync_at = ? WHERE id = ?")
+    .bind(codexState, tz, claudePlan, codexPlan, now, user.id));
   await env.DB.batch(stmts);
 
   const fresh = { ...user, tz, codex_state: codexState };
@@ -294,6 +299,9 @@ async function meSummary(env, user) {
   const cli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
   const delays = ws.map(delayOf).filter((d) => d != null);
   const s = await statsFor(env, user);
+  // 「ふだんの1日」= 使った日の枠数の中央値。オンボーディングで目標の目安に使う
+  const active = Object.values(s.days).map((d) => d.count).sort((a, b) => a - b);
+  const typicalDay = active.length ? active[Math.floor((active.length - 1) / 2)] : 0;
   return {
     user: { login: user.login, tz: user.tz, goal: user.goal },
     linked: cli.n > 0,
@@ -305,24 +313,36 @@ async function meSummary(env, user) {
       avgLateMin: delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length / MIN) : null,
       lostMin: Math.round(delays.reduce((a, b) => a + b, 0) / MIN),
       bestDay: Math.max(s.bestDay, s.todayCount),
+      typicalDay,
+      activeDays: active.length,
     },
+    plans: { claude: user.claude_plan, codex: user.codex_plan },
     stats: { streak: s.streak, todayCount: s.todayCount, goal: s.goal, xp: s.xp, weekXp: s.weekXp },
   };
 }
 
 // ---------- pages data ----------
-async function leaderboard(env, now = Date.now()) {
-  // 今週 (各自のタイムゾーンの月曜 0時から) の XP。候補は直近 8日に到達のある公開ユーザー
+// ランキングはツール×課金プランごと (Pro と Max では 1枠の重さがまるで違うので混ぜない)。
+// 両方使う人は両方のボードに出て、それぞれそのツールの枠だけで数える。
+async function leaderboards(env, now = Date.now()) {
   const { results } = await env.DB.prepare(
-    `SELECT u.id, u.login, u.name, u.avatar_url, u.tz, u.goal FROM users u
+    `SELECT u.id, u.login, u.name, u.avatar_url, u.tz, u.goal, u.claude_plan, u.codex_plan FROM users u
      WHERE u.public = 1 AND EXISTS (SELECT 1 FROM windows w WHERE w.user_id = u.id AND w.hit_at > ?)`,
   ).bind(now - 8 * DAY).all();
-  const rows = [];
+  const boards = {};
   for (const u of results) {
-    const s = computeStats(await userWindows(env, u.id), { tz: u.tz, goal: u.goal, now });
-    if (s.weekXp > 0) rows.push({ ...u, weekXp: s.weekXp, streak: s.streak, todayCount: s.todayCount });
+    const all = await userWindows(env, u.id);
+    for (const tool of ["claude", "codex"]) {
+      const ws = all.filter((w) => w.tool === tool);
+      if (!ws.length) continue;
+      const s = computeStats(ws, { tz: u.tz, goal: u.goal, now });
+      if (s.weekXp <= 0) continue;
+      const key = `${tool}:${u[`${tool}_plan`] || "unknown"}`;
+      (boards[key] ??= []).push({ ...u, weekXp: s.weekXp, weekWindows: Object.entries(s.days).filter(([k]) => k >= s.week).reduce((n, [, d]) => n + d.count, 0) });
+    }
   }
-  return rows.sort((a, b) => b.weekXp - a.weekXp).slice(0, 100);
+  for (const k of Object.keys(boards)) boards[k] = boards[k].sort((a, b) => b.weekXp - a.weekXp).slice(0, 100);
+  return boards;
 }
 
 // ---------- cron: 毎分 ----------
@@ -428,7 +448,7 @@ async function route(req, env) {
   if (p === "/") {
     return html(pages.landing(user, origin));
   }
-  if (p === "/leaderboard") return html(pages.leaderboard(user, await leaderboard(env)));
+  if (p === "/leaderboard") return html(pages.leaderboard(user, await leaderboards(env), url.searchParams.get("board")));
 
   const prof = p.match(/^\/@([\w-]{1,39})(\/card\.svg)?$/);
   if (prof) {

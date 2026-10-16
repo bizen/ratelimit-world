@@ -324,3 +324,19 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 [hidden] { display: none !important; }
 .toast { width: max-content; max-width: calc(100vw - 32px); line-height: 1.5; }
 .toast b { display: block; }
+
+/* プラン表示とランキングのタブ */
+.plans { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; font-size: 13px; color: var(--muted); }
+.plan { font: 700 12px var(--body); color: var(--violet); background: var(--violet-soft); border-radius: 999px; padding: 2px 10px; }
+.tabs { display: flex; gap: 6px; overflow-x: auto; margin: 14px 0 4px; padding-bottom: 4px; scrollbar-width: none; }
+.tab {
+  flex: none; font: 700 13px var(--body); color: var(--muted); text-decoration: none;
+  border: 2px solid var(--line); border-radius: 999px; padding: 6px 12px; background: var(--surface);
+}
+.tab small { font-family: var(--mono); opacity: .7; }
+.tab.on { color: #fff; background: var(--violet); border-color: var(--violet); }
+.goal-card { position: relative; }
+.goal-badge {
+  position: absolute; top: -10px; right: 10px; font: 700 11px var(--body); color: #fff;
+  background: var(--ember); border-radius: 999px; padding: 2px 8px;
+}

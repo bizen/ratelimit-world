@@ -173,7 +173,7 @@ export function scanCodex(sinceMs) {
         const reset = lim.resets_at != null ? epochMs(+lim.resets_at)
           : lim.resets_in_seconds != null ? ts + lim.resets_in_seconds * 1000 : null;
         const used = Number(lim.used_percent);
-        if (reset && (!current || ts > current.at)) current = { at: ts, usedPercent: used, resetAt: reset };
+        if (reset && (!current || ts > current.at)) current = { at: ts, usedPercent: used, resetAt: reset, plan: p.rate_limits.plan_type ?? null };
         if (used >= 100 && reset) hits.push({ ts, reset });
       } else if (line.includes('"task_started"')) {
         const ev = parseLine(line);
@@ -184,6 +184,22 @@ export function scanCodex(sinceMs) {
     }
   }
   return { hits, activity, current };
+}
+
+// ---------- plan ----------
+// 課金プランごとにランキングを分けるため、プランの種類だけを読む (メールや組織 ID は読まない)
+export function claudePlan() {
+  const file = process.env.CLAUDE_CONFIG_DIR ? path.join(process.env.CLAUDE_CONFIG_DIR, ".claude.json") : path.join(os.homedir(), ".claude.json");
+  const a = readJson(file, {})?.oauthAccount;
+  if (!a) return null;
+  const tier = String(a.userRateLimitTier || a.organizationRateLimitTier || "");
+  const type = String(a.organizationType || "");
+  const m = tier.match(/max_(\d+)x/);
+  if (/max/.test(type) || m) return m ? `max_${m[1]}x` : "max";
+  if (/pro/.test(type)) return "pro";
+  if (/team/.test(type)) return "team";
+  if (/enterprise/.test(type)) return "enterprise";
+  return type ? type.replace(/^claude_/, "").slice(0, 20) : null;
 }
 
 // ---------- windows ----------
@@ -217,6 +233,7 @@ export function collect(days) {
     client: { version: VERSION, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, platform: process.platform },
     windows,
     current: { codex: codex.current },
+    plans: { claude: claudePlan(), codex: codex.current?.plan ?? null },
   };
 }
 

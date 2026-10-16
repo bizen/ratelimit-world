@@ -1,6 +1,14 @@
 // サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js
 import { TOOL_NAME, addDays, localTime, comboXp, tierOf, WINDOW_MS } from "./logic.js";
 
+// 課金プランの表示名。CLI が送ってくる値 → 人が読める名前
+const PLAN_NAMES = {
+  claude: { pro: "Claude Pro", max: "Claude Max", max_5x: "Claude Max 5x", max_20x: "Claude Max 20x", team: "Claude Team", enterprise: "Claude Enterprise", unknown: "Claude（プラン不明）" },
+  codex: { free: "ChatGPT Free", plus: "ChatGPT Plus", pro: "ChatGPT Pro", team: "ChatGPT Business", business: "ChatGPT Business", enterprise: "ChatGPT Enterprise", edu: "ChatGPT Edu", unknown: "Codex（プラン不明）" },
+};
+export const planName = (tool, plan) => PLAN_NAMES[tool][plan || "unknown"] ?? `${tool === "claude" ? "Claude" : "ChatGPT"} ${plan}`;
+const planBadges = (u) => [["claude", u.claude_plan], ["codex", u.codex_plan]].filter(([, p]) => p).map(([t, p]) => `<span class="plan">${esc(planName(t, p))}</span>`).join("");
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 function layout({ title, user, body, head = "", bodyClass = "" }) {
@@ -108,20 +116,26 @@ export function landing(user, origin) {
   </div>
   <div class="how-item">
     <h2 class="h3">ストリークで続ける</h2>
-    <p>1日の目標回数（はじめは2回）を達成すると🔥が1つ伸びます。7日続けるとフリーズ🧊がもらえて、うっかり休んだ日を1回だけ守ってくれます。</p>
+    <p>目標の枠数は自分で決めます。達成した日が続くと🔥が伸び、同じ日にもう1枠重ねるごとに XP が増えていきます。7日続けるとフリーズ🧊がもらえて、うっかり休んだ日を1回だけ守ってくれます。ランキングは Claude Pro・ChatGPT Plus のように同じプランの人どうしで競います。</p>
   </div>
 </section>`,
   });
 }
 
 // ---------- dashboard ----------
+function nextWindowText(s, now) {
+  const limited = Object.values(s.tools).map((t) => t.resetAt).sort((a, b) => a - b)[0];
+  return limited && limited > now ? ` · 次の枠は ${localTime(limited, s.tz)}〜` : " · 次の枠は今すぐ始められます";
+}
+
 // 今日のトラック: 枠を 1つずつ積んでいく。先のマスにも XP を見せて、次を取りたくさせる
 function todayTrack(s, now) {
   const n = s.todayCount;
-  const slots = Math.min(10, Math.max(5, s.goal, n + 1));
+  // 目標までのマス + 次の1マスだけ見せる (届かない上限は見せない)
+  const slots = Math.min(12, Math.max(s.goal, n) + 1);
   const limited = Object.values(s.tools).map((t) => t.resetAt).sort((a, b) => a - b)[0];
   const ready = Object.entries(s.lastReset).some(([, w]) => w.resumed_at == null && now - w.reset_at < 3 * 3600 * 1000);
-  const nextLabel = ready ? "今すぐ" : limited ? `${localTime(limited, s.tz)}〜` : "いつでも";
+  const nextLabel = ready ? "今すぐ" : limited ? `${localTime(limited, s.tz)}〜` : "今すぐ";
   let out = "";
   for (let i = 1; i <= slots; i++) {
     const w = s.todayWindows[i - 1];
@@ -216,7 +230,7 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
   ${todayTrack(s, now)}
   <p class="today-note">${s.todayDone
     ? `目標の ${s.goal} 枠を達成。${s.todayCount + 1}枠目「${esc(s.nextTier)}」は <b>+${s.nextXp} XP</b>`
-    : `目標まであと <b>${left}</b> 枠 · 今から始めれば最大 ${s.possibleToday} 枠`}${s.todayIsRecord && s.todayCount > 1 ? ` · <span class="record">1日の自己ベスト更新中</span>` : s.bestDay > 0 ? ` · 自己ベスト ${s.bestDay} 枠` : ""}</p>
+    : `目標まであと <b>${left}</b> 枠${nextWindowText(s, now)}`}${s.todayIsRecord && s.todayCount > 1 ? ` · <span class="record">1日の自己ベスト更新中</span>` : s.bestDay > 0 ? ` · 自己ベスト ${s.bestDay} 枠` : ""}</p>
   <p class="late">今日の出遅れ <b>${s.todayLateMin}</b> 分${s.quickRun > 0 ? ` · 即スタート <b>${s.quickRun}</b> 連続` : ""}</p>
 </section>
 <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
@@ -246,6 +260,7 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
   <h2 class="h3">${hasCli ? "PC の連携" : "まず PC を連携する"}</h2>
   <p>${hasCli ? "連携済みです。別の PC を追加するときも同じコマンドを使います。" : "Claude Code や Codex を使う PC のターミナルで、1回だけ実行してください。"}</p>
   <pre class="cmd"><code>curl -fsSL ${esc(origin)}/install.sh | sh</code><button class="copy" data-copy aria-label="コマンドをコピー">コピー</button></pre>
+  ${planBadges(user) ? `<p class="plans">検出したプラン ${planBadges(user)}</p>` : ""}
   <p class="muted small">Node.js 18 以上が必要です。外すときは <code>node ~/.ratelimit-world/ratelimit-world.mjs uninstall</code>。最終受信: ${user.last_sync_at ? new Date(user.last_sync_at).toLocaleString("ja-JP", { timeZone: s.tz }) : "まだありません"}</p>
 </section>
 
@@ -276,10 +291,10 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
 
 // ---------- onboarding ----------
 const GOALS = [
-  [1, "ゆるく", "まずは毎日1枠"],
-  [2, "毎日コツコツ", "おすすめ。朝と夜で2枠"],
-  [3, "ガチ", "ハットトリックを毎日"],
-  [4, "フルスロットル", "起きている間ずっと回す"],
+  [1, "毎日1枠", "まずは続けることから"],
+  [2, "毎日2枠", "朝と夜で1枠ずつ"],
+  [3, "毎日3枠", "1日しっかり回す"],
+  [4, "毎日4枠", "ほぼ一日中"],
 ];
 
 export function welcome(user, { origin, vapidKey }) {
@@ -291,21 +306,11 @@ export function welcome(user, { origin, vapidKey }) {
     bodyClass: "welcome-page",
     body: `
 <section class="welcome" data-welcome data-goal="${user.goal}">
-  <ol class="steps" aria-label="セットアップの進み具合"><li class="on">目標</li><li>PC を連携</li><li>通知</li></ol>
+  <ol class="steps" aria-label="セットアップの進み具合"><li class="on">PC を連携</li><li>目標</li><li>通知</li></ol>
 
   <div class="step" data-step="1">
     <p class="eyebrow">ようこそ、@${esc(user.login)}</p>
-    <h1 class="h1">1日に何枠、使い切る？</h1>
-    <p class="muted">目標の枠数を使い切った日が続くと、🔥ストリークが伸びます。あとから変えられます。</p>
-    <div class="goals">
-      ${GOALS.map(([g, name, desc]) => `<button class="goal-card ${g === 2 ? "rec" : ""}" data-goal-pick="${g}">
-        <span class="goal-n">${g}<small>枠</small></span><span class="goal-name">${name}</span><span class="goal-desc">${desc}</span>
-        <span class="goal-xp">1日 +${[100, 220, 370, 570][g - 1]} XP〜</span></button>`).join("")}
-    </div>
-  </div>
-
-  <div class="step" data-step="2" hidden>
-    <h1 class="h1">PC を連携しよう</h1>
+    <h1 class="h1">まず、PC を連携しよう</h1>
     <p>Claude Code や Codex を使っている PC のターミナルに貼りつけて、実行してください。ブラウザが開いたら「連携する」を押すだけです。</p>
     <pre class="cmd"><code>${esc(cmd)}</code><button class="copy" data-copy aria-label="コマンドをコピー">コピー</button></pre>
     <p class="waiting" data-link-wait><i class="dot"></i>PC からの連絡を待っています…</p>
@@ -317,9 +322,19 @@ export function welcome(user, { origin, vapidKey }) {
         <div><b data-h="bestDay">0</b><span>1日の最多枠</span></div>
       </div>
       <p class="reveal-msg" data-h="message"></p>
-      <button class="btn big" data-next>通知を設定する</button>
+      <button class="btn big" data-next="2">目標を決める</button>
     </div>
-    <p class="skip"><button class="link" data-next>あとで連携する</button></p>
+    <p class="skip"><button class="link" data-next="2">あとで連携する</button></p>
+  </div>
+
+  <div class="step" data-step="2" hidden>
+    <h1 class="h1">1日に何枠、使い切る？</h1>
+    <p data-suggest>目標の枠数を使い切った日が続くと、🔥ストリークが伸びます。無理のない数から始めて、慣れたら上げましょう。</p>
+    <div class="goals">
+      ${GOALS.map(([g, name, desc]) => `<button class="goal-card" data-goal-pick="${g}">
+        <span class="goal-n">${g}<small>枠</small></span><span class="goal-name">${name}</span><span class="goal-desc">${desc}</span></button>`).join("")}
+    </div>
+    <p class="muted small">あとから設定でいつでも変えられます。</p>
   </div>
 
   <div class="step" data-step="3" hidden>
@@ -348,7 +363,7 @@ export function profile(viewer, u, s, origin) {
     body: `
 <section class="profile-head">
   ${u.avatar_url ? `<img class="avatar" src="${esc(u.avatar_url)}" alt="">` : ""}
-  <div><h1 class="h2">@${esc(u.login)}</h1>${u.name && u.name !== u.login ? `<p class="muted">${esc(u.name)}</p>` : ""}</div>
+  <div><h1 class="h2">@${esc(u.login)}</h1>${u.name && u.name !== u.login ? `<p class="muted">${esc(u.name)}</p>` : ""}<p class="plans">${planBadges(u)}</p></div>
 </section>
 <section class="stats-row">
   <div class="stat flame"><b>${s.streak}</b><span>日連続</span></div>
@@ -371,14 +386,29 @@ export function profile(viewer, u, s, origin) {
   });
 }
 
-export function leaderboard(viewer, rows) {
+export function leaderboard(viewer, boards, selected) {
+  const order = (k) => {
+    const [tool, plan] = k.split(":");
+    const ps = Object.keys(PLAN_NAMES[tool]);
+    return (tool === "claude" ? 0 : 100) + (ps.includes(plan) ? ps.indexOf(plan) : 50);
+  };
+  const keys = Object.keys(boards).sort((a, b) => order(a) - order(b));
+  // 見ている人自身のプランのボードを最初に開く
+  const mine = viewer ? keys.find((k) => k === `claude:${viewer.claude_plan}` || k === `codex:${viewer.codex_plan}`) : null;
+  const cur = keys.includes(selected) ? selected : mine ?? keys[0];
+  const name = (k) => { const [t, p] = k.split(":"); return planName(t, p); };
+  const rows = boards[cur] ?? [];
+  const tabs = keys.map((k) => `<a class="tab ${k === cur ? "on" : ""}" href="/leaderboard?board=${encodeURIComponent(k)}" ${k === cur ? 'aria-current="page"' : ""}>${esc(name(k))} <small>${boards[k].length}</small></a>`).join("");
   const list = rows.length
-    ? rows.map((r, i) => `<li class="${viewer?.id === r.id ? "you" : ""}"><span class="rank">${i + 1}</span>${r.avatar_url ? `<img src="${esc(r.avatar_url)}" alt="">` : `<span class="noav"></span>`}<a href="/@${esc(r.login)}">@${esc(r.login)}</a><span class="fl">🔥${r.streak}</span><b>${r.weekXp.toLocaleString()} XP</b></li>`).join("")
+    ? rows.map((r, i) => `<li class="${viewer?.id === r.id ? "you" : ""}"><span class="rank">${i + 1}</span>${r.avatar_url ? `<img src="${esc(r.avatar_url)}" alt="">` : `<span class="noav"></span>`}<a href="/@${esc(r.login)}">@${esc(r.login)}</a><span class="fl">${r.weekWindows}枠</span><b>${r.weekXp.toLocaleString()} XP</b></li>`).join("")
     : `<li class="empty">今週はまだ誰もいません。最初の1枠を使い切りましょう。</li>`;
   return layout({
     title: "今週のランキング · ratelimit.world",
     user: viewer,
-    body: `<section class="card"><h1 class="h2">今週のランキング</h1><p class="muted">月曜 0時（各自のタイムゾーン）からの XP。1枠使い切ると 100 XP、リセットから5分以内に再開すると +50 XP。</p><ol class="board">${list}</ol></section>`,
+    body: `<section class="card"><h1 class="h2">今週のランキング</h1>
+<p class="muted">プランごとに 1枠の大きさが違うので、同じプランの人どうしで競います。月曜 0時（各自のタイムゾーン）からの XP で、そのツールの枠だけを数えます。</p>
+${keys.length ? `<nav class="tabs" aria-label="プラン">${tabs}</nav>` : ""}
+<ol class="board">${list}</ol></section>`,
   });
 }
 

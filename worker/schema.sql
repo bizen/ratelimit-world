@@ -7,10 +7,12 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT,
   avatar_url TEXT,
   tz TEXT NOT NULL DEFAULT 'UTC',
-  goal INTEGER NOT NULL DEFAULT 2,
+  goal INTEGER NOT NULL DEFAULT 1,
   remind_at TEXT NOT NULL DEFAULT '21:00',         -- ピンチ通知の時刻 (ユーザーのタイムゾーン)
   notify TEXT NOT NULL DEFAULT '{"hit":true,"reset":true,"late":true,"pinch":true,"goal":true}',
   public INTEGER NOT NULL DEFAULT 1,
+  claude_plan TEXT,                                -- 'pro' | 'max_5x' | 'max_20x' ... (CLI が ~/.claude.json から読む)
+  codex_plan TEXT,                                 -- 'plus' | 'pro' ... (Codex のログの plan_type)
   codex_state TEXT,                                -- 直近の Codex 5時間枠 {at, usedPercent, resetAt}
   last_sync_at INTEGER,
   onboarded_at INTEGER,                            -- /welcome を終えた時刻

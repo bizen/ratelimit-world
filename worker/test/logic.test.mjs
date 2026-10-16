@@ -96,13 +96,23 @@ test("combo XP grows with each window in the same day", async () => {
   const s = computeStats(ws, { tz: TZ, goal: 2, now });
   assert.deepEqual(s.todayWindows.map((w) => w.xp), [150, 120, 150]);
   assert.equal(s.todayXp, 420);
-  assert.equal(s.tier, "ハットトリック");
+  assert.equal(s.tier, "目標超え");
+  assert.equal(s.nextTier, "限界突破");
   assert.equal(s.nextXp, 200);
   assert.equal(s.bestDay, 1);
   assert.equal(s.todayIsRecord, true);
   const m = msg.hit("codex", s, ws[2]);
-  assert.match(m.title, /3枠目「ハットトリック」 \+150 XP/);
+  assert.match(m.title, /3枠目「目標超え」 \+150 XP/);
   assert.match(m.body, /自己ベスト更新/);
   const goal = msg.hit("claude", computeStats(ws.slice(0, 2), { tz: TZ, goal: 2, now }), ws[1]);
   assert.match(goal.body, /目標達成/);
+});
+
+test("tiers are relative to the user's own goal", async () => {
+  const { tierOf } = await import("../src/logic.js");
+  assert.equal(tierOf(1, 3), "あと2枠");
+  assert.equal(tierOf(1, 1), "目標達成");
+  assert.equal(tierOf(2, 1), "目標超え");
+  assert.equal(tierOf(3, 1), "限界突破");
+  assert.equal(tierOf(5, 3), "限界突破");
 });

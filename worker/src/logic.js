@@ -75,9 +75,14 @@ export function delayOf(w) {
 export const COMBO_XP = [100, 120, 150, 200, 300];
 export const comboXp = (n) => COMBO_XP[Math.min(n, COMBO_XP.length) - 1];
 
-// 1日に重ねた枠の数につく称号。Claude と Codex は別々の枠なので 6枠以上もありうる
-export const TIERS = ["ウォームアップ", "ダブル", "ハットトリック", "フルスロットル", "パーフェクト", "限界突破"];
-export const tierOf = (n) => (n <= 0 ? null : TIERS[Math.min(n, TIERS.length) - 1]);
+// 称号は「自分の目標」が基準。目標1枠の人も3枠の人も、同じように限界突破までたどり着ける
+export function tierOf(n, goal) {
+  if (n <= 0) return null;
+  if (n < goal) return `あと${goal - n}枠`;
+  if (n === goal) return "目標達成";
+  if (n === goal + 1) return "目標超え";
+  return "限界突破";
+}
 
 export function quickBonus(w) {
   const d = delayOf(w);
@@ -101,7 +106,7 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now() }
     const d = (days[k] ??= { count: 0, claude: 0, codex: 0, xp: 0, lateMin: 0 });
     d.count++;
     const x = xpOf(w, d.count);
-    if (k === today) todayWindows.push({ tool: w.tool, hitAt: w.hit_at, resetAt: w.reset_at, n: d.count, xp: x, combo: comboXp(d.count), bonus: quickBonus(w), tier: tierOf(d.count) });
+    if (k === today) todayWindows.push({ tool: w.tool, hitAt: w.hit_at, resetAt: w.reset_at, n: d.count, xp: x, combo: comboXp(d.count), bonus: quickBonus(w), tier: tierOf(d.count, goal) });
     d[w.tool] = (d[w.tool] ?? 0) + 1;
     d.xp += x;
     const late = delayOf(w);
@@ -163,8 +168,8 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now() }
     todayCount,
     todayWindows,
     todayXp: days[today]?.xp ?? 0,
-    tier: tierOf(todayCount),
-    nextTier: tierOf(todayCount + 1),
+    tier: tierOf(todayCount, goal),
+    nextTier: tierOf(todayCount + 1, goal),
     nextXp: comboXp(todayCount + 1),
     bestDay,
     todayIsRecord: todayCount > 0 && todayCount > bestDay,
@@ -189,7 +194,7 @@ export const msg = {
     return {
       title: `⚡ ${TOOL_NAME[tool]} がリセットされたよ！`,
       body: `今すぐ始めれば次のリセットは ${next}。` +
-        (left ? `今日はあと ${left} 枠で目標達成！` : `${s.todayCount + 1}枠目「${s.nextTier}」は +${s.nextXp} XP`),
+        (left ? `今日はあと ${left} 枠で目標達成！` : `${s.todayCount + 1}枠目で「${s.nextTier}」、+${s.nextXp} XP`),
       tag: `reset-${tool}`,
     };
   },
@@ -206,7 +211,7 @@ export const msg = {
     const fire = s.streak > 0 ? `🔥${s.streak}日連続が途切れちゃう` : "今日こそ記録を始めよう";
     return {
       title: `😱 今日まだ ${s.todayCount}/${s.goal} 枠…`,
-      body: `あと ${left} 枠。${fire}${s.freezes > 0 ? `（フリーズ ${s.freezes} 個あり）` : ""}。今から始めれば最大 ${s.possibleToday} 枠いけるよ`,
+      body: `あと ${left} 枠。${fire}${s.freezes > 0 ? `（フリーズ ${s.freezes} 個あり）` : ""}。まずは目の前の1枠から`,
       tag: "pinch",
     };
   },
@@ -219,7 +224,7 @@ export const msg = {
     else if (n < s.goal) extra.push(`目標まであと ${s.goal - n} 枠`);
     if (s.todayIsRecord && n > 1) extra.push("1日の自己ベスト更新！");
     return {
-      title: `🧱 今日${n}枠目「${tw?.tier ?? s.tier}」 +${tw?.xp ?? 100} XP`,
+      title: `🧱 今日${n}枠目${n >= s.goal ? `「${tw?.tier ?? s.tier}」` : ""} +${tw?.xp ?? 100} XP`,
       body: `${TOOL_NAME[tool]} を使い切ったよ。${extra.join(" ")} 次のリセットは ${localTime(w.reset_at, s.tz)}。${n + 1}枠目は +${comboXp(n + 1)} XP`,
       tag: `hit-${tool}`,
     };
@@ -227,7 +232,7 @@ export const msg = {
   goal(s) {
     return {
       title: `🔥 ${s.streak}日連続 達成！`,
-      body: `今日 ${s.todayCount} 枠「${s.tier}」。${s.todayCount + 1}枠目は +${s.nextXp} XP、まだ重ねられるよ`,
+      body: `今日 ${s.todayCount} 枠。${s.todayCount + 1}枠目は +${s.nextXp} XP で「${s.nextTier}」`,
       tag: "goal",
     };
   },
