@@ -286,9 +286,12 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
 
   // 2) 目標を選ぶ。過去の記録があれば「ふだんの1日」を目安としておすすめする (決めるのは本人)
   function suggest() {
-    const typical = Math.min(4, Math.max(1, history?.typicalDay || 1));
+    // ふだんの1日にいちばん近い選択肢をおすすめにする (両方のツールを使えば 4枠を超えることもある)
+    const typical = Math.max(1, history?.typicalDay || 1);
+    const options = $$("[data-goal-pick]", root).map((c) => +c.dataset.goalPick);
+    const pick = options.reduce((a, b) => (Math.abs(b - typical) < Math.abs(a - typical) ? b : a), options[0]);
     for (const c of $$("[data-goal-pick]", root)) {
-      const rec = +c.dataset.goalPick === typical;
+      const rec = +c.dataset.goalPick === pick;
       c.classList.toggle("rec", rec);
       $(".goal-badge", c)?.remove();
       if (rec) c.insertAdjacentHTML("afterbegin", `<span class="goal-badge">${T("c.recommend")}</span>`);

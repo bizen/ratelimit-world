@@ -376,7 +376,8 @@ async function cliVerify(req, env, ctx) {
 // ---------- settings / push ----------
 async function saveSettings(req, env, user) {
   const b = await req.json().catch(() => ({}));
-  const goal = Math.min(5, Math.max(1, parseInt(b.goal ?? user.goal, 10) || user.goal));
+  // Claude Code と Codex は別々の 5時間枠なので、両方使えば 1日 10枠まであり得る
+  const goal = Math.min(10, Math.max(1, parseInt(b.goal ?? user.goal, 10) || user.goal));
   const tz = validTz(b.tz) ? b.tz : user.tz;
   const remindAt = /^([01]\d|2[0-3]):[0-5]\d$/.test(b.remindAt) ? b.remindAt : user.remind_at;
   const n = parseNotify(user);

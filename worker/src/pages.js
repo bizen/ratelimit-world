@@ -477,7 +477,7 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
 <section class="card">
   <h2 class="h3">${t("settings.h")}</h2>
   <form class="settings" data-settings>
-    <label>${t("settings.goal")} <select name="goal">${[1, 2, 3, 4, 5].map((g) => `<option ${g === s.goal ? "selected" : ""}>${g}</option>`).join("")}</select> ${t("settings.goal.unit")}</label>
+    <label>${t("settings.goal")} <select name="goal">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((g) => `<option ${g === s.goal ? "selected" : ""}>${g}</option>`).join("")}</select> ${t("settings.goal.unit")}</label>
     <label>${t("settings.remind")} <input type="time" name="remindAt" value="${esc(user.remind_at)}"></label>
     <label>${t("settings.tz")} <input name="tz" value="${esc(user.tz)}" list="tzs"><datalist id="tzs" data-tz-list></datalist></label>
     <label>${t("settings.lang")} <select name="lang"><option value="ja" ${lang === "ja" ? "selected" : ""}>日本語</option><option value="en" ${lang === "en" ? "selected" : ""}>English</option></select></label>
@@ -538,7 +538,7 @@ export function welcome(ctx, { origin, vapidKey }) {
     <h1 class="h1">${t("wel.goal.h")}</h1>
     <p data-suggest>${t("wel.goal.p")}</p>
     <div class="goals">
-      ${[1, 2, 3, 4].map((g) => `<button class="goal-card" data-goal-pick="${g}">
+      ${[1, 2, 3, 4, 6, 8].map((g) => `<button class="goal-card" data-goal-pick="${g}">
         <span class="goal-n">${g}<small>${t("unit")}</small></span><span class="goal-name">${t(`goal.${g}.name`)}</span><span class="goal-desc">${t(`goal.${g}.desc`)}</span></button>`).join("")}
     </div>
     <p class="muted small">${t("wel.goal.note")}</p>
