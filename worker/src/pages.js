@@ -53,6 +53,7 @@ ${head}
 <main>${body}</main>
 <footer class="foot">
   <a class="brand-sm" href="/">ratelimit.world</a>
+  <a class="gh" href="https://github.com/bizen/ratelimit-world" rel="noopener">GitHub</a>
   <a class="lang" href="/lang/${other}?next=${encodeURIComponent(ctx.path || "/")}" hreflang="${other}" lang="${other}">🌐 ${t("lang.switch")}</a>
 </footer>
 <script src="/app.js" defer></script>
@@ -143,8 +144,38 @@ export function landing(ctx, origin) {
     <h2 class="h3">${t("lp.how3.h")}</h2>
     <p>${t("lp.how3.p")}</p>
   </div>
+</section>
+
+${landingFeatures(ctx)}
+
+<section class="final-cta">
+  <h2 class="h2">${t("lp.final.h")}</h2>
+  <p>${t("lp.final.p")}</p>
+  ${user ? `<a class="btn big" href="/me">${t("lp.open")}</a>` : `<a class="btn big" href="/login">${t("lp.start")}</a>`}
 </section>`,
   });
+}
+
+// 「続けたくなる仕組み」: 実際の画面と同じ部品で、見本の値を入れて見せる
+function landingFeatures(ctx) {
+  const { t } = ctx;
+  const feat = (cls, h, p, demo) => `<article class="feat ${cls}"><div class="feat-demo" aria-hidden="true">${demo}</div><h3 class="h3">${h}</h3><p>${p}</p></article>`;
+  const quests = [["quick2", 1, 2], ["noon", 1, 1], ["late10", 1, 1]].map(([id, v, n]) => `<li class="${v >= n ? "done" : ""}">
+      <span class="q-check">${v >= n ? "✓" : ""}</span><span class="q-title">${esc(t(`q.${id}`, { n }))}</span><span class="q-val">${v}/${n}</span><span class="q-xp">+50</span><i class="q-mini" style="--p:${(v / n) * 100}%"></i></li>`).join("");
+  const league = [["mika", 1840], ["you", 1530], ["devtaro", 1210], ["kenji", 990]].map(([n, xp], i) => `${i === 2 ? `<li class="lg-line up"><span>${t("lg.up")}</span></li>` : ""}<li class="${i < 2 ? "up" : ""} ${n === "you" ? "you" : ""}"><span class="rank">${i + 1}</span><span class="noav"></span><a>@${n === "you" ? "you" : n}</a>${n === "you" ? `<small class="fr-you">${t("lg.you")}</small>` : "<span></span>"}<b>${xp.toLocaleString()} XP</b></li>`).join("");
+  const friends = [["mika", 12, 3, 3, true, ""], ["devtaro", 5, 1, 2, false, `<span class="fr-st go">${t("fr.waiting", 12)}</span>`]].map(([n, st, c, g, done, extra]) => `<li><span class="noav"></span><div class="fr-main"><span class="fr-name"><a>@${n}</a></span><span class="fr-sub"><span class="fr-flame">🔥${st}</span> · ${t("fr.today", c, g)}${done ? " ✓" : ""} ${extra}</span></div></li>`).join("");
+  return `<section class="features">
+  <h2 class="h2">${t("lp.feat.h")}</h2>
+  <p class="lead">${t("lp.feat.lead")}</p>
+  <div class="feat-grid">
+    ${feat("f-limi", t("lp.f.limi.h"), t("lp.f.limi.p"), `<div class="mascot mood-happy"><div class="limi">${limi("happy")}</div><p class="bubble">${esc(t("mood.quick", { m: 1 }))}</p></div>`)}
+    ${feat("f-pace", t("lp.f.pace.h"), t("lp.f.pace.p"), `<div class="pace ok"><b>${t("c.paceOk")}</b><span>${t("c.paceMaxAt", { t: "22:25" })}</span></div><div class="pace short"><b>${t("c.paceBad")}</b><span>${t("c.paceShortAt", { p: 16 })}</span></div>`)}
+    ${feat("f-quest", t("lp.f.quest.h"), t("lp.f.quest.p"), `<ul class="quests">${quests}</ul>`)}
+    ${feat("f-league", t("lp.f.league.h"), t("lp.f.league.p"), `<div class="lg-mini"><span class="lg-badge">🥈</span><b>${t("lg.h", ctx.lang === "ja" ? "シルバー" : "Silver")}</b></div><ol class="board lg-list">${league}</ol>`)}
+    ${feat("f-friends", t("lp.f.friends.h"), t("lp.f.friends.p"), `<ol class="board fr-list">${friends}</ol>`)}
+    ${feat("f-pc", t("lp.f.pc.h"), t("lp.f.pc.p"), `<pre class="statusline"><code>${esc(t("lp.f.pc.line"))}</code></pre>`)}
+  </div>
+</section>`;
 }
 
 // ---------- dashboard ----------

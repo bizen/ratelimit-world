@@ -685,3 +685,28 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 /* 数字はカードの幅に収まる大きさ (最大 30px)。--n は文字数 */
 .stat { container-type: inline-size; }
 .stat b { font-size: min(30px, calc(100cqi / (var(--n, 3) * 0.82))); }
+
+/* LP: 続けたくなる仕組み (実際の部品で見本を見せる) */
+.features { margin: 56px 0 0; }
+.features > .lead { max-width: 640px; }
+.feat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 20px; }
+.feat { background: var(--surface); border: 2px solid var(--line); border-radius: 22px; padding: 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.feat .h3 { margin: 16px 0 6px; }
+.feat p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.7; }
+.feat-demo { background: var(--paper); border-radius: 16px; padding: 14px; min-height: 150px; display: grid; align-content: center; gap: 8px; pointer-events: none; }
+.feat-demo .mascot { margin: 0; }
+.feat-demo .pace { margin: 0; height: auto; padding: 8px 10px; }
+.feat-demo .quests { margin: 0; }
+.feat-demo .quests li { background: var(--surface); }
+.feat-demo .board { margin: 0; }
+.feat-demo .board li { padding: 6px 4px; }
+.feat-demo .fr-list li { grid-template-columns: 28px 1fr; }
+.feat-demo .noav { width: 28px; height: 28px; border-radius: 50%; background: var(--line); }
+.lg-mini { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.lg-mini .lg-badge { width: 32px; height: 32px; font-size: 18px; border-radius: 10px; background: var(--surface); }
+.statusline { margin: 0; padding: 12px 14px; border-radius: 12px; background: #1E1B3A; color: #E8E6FF; font: 600 12.5px/1.5 var(--mono); white-space: pre-wrap; }
+.final-cta { margin: 56px 0 8px; padding: 32px 24px; border-radius: 26px; background: var(--ink); color: var(--paper); text-align: center; }
+.final-cta .h2 { margin: 0 0 8px; color: inherit; }
+.final-cta p { margin: 0 0 20px; opacity: .8; }
+.foot .gh { margin-left: auto; margin-right: 12px; font-weight: 700; font-size: 14px; color: var(--muted); text-decoration: none; }
+.foot .gh:hover { color: var(--violet); }
