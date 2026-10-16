@@ -103,6 +103,24 @@ export function delayOf(w) {
 export const COMBO_XP = [100, 120, 150, 200, 300];
 export const comboXp = (n) => COMBO_XP[Math.min(n, COMBO_XP.length) - 1];
 
+// 「AI が書いた量」の段階: [キー, その長さの出力トークン数 (だいたい)]。名前は i18n.js の w.<キー>
+export const WRITTEN = [
+  ["haiku", 15], ["tweet", 140], ["loveLetter", 800], ["principal", 3000], ["melos", 1e4], ["terms", 2.5e4],
+  ["pokedex", 6e4], ["neko", 3.5e5], ["warPeace", 7.8e5], ["potter", 1.45e6], ["kochikame", 2.4e6], ["kojien", 1.2e7],
+  ["britannica", 6e7], ["linux", 3e8], ["lifetime", 6e8], ["wikipedia", 6.5e9], ["ndl", 1e12], ["allBooks", 1.3e13],
+  ["web", 1e14], ["allSpeech", 1e19], ["akashic", Infinity],
+];
+
+// 今どの段階まで書いたか。reached = 届いたいちばん上の段 (-1 = まだ俳句にも届いていない)、pct = 次の段までの進み具合
+export function writtenLevel(total) {
+  let reached = -1;
+  for (let i = 0; i < WRITTEN.length; i++) if (total >= WRITTEN[i][1]) reached = i;
+  const next = Math.min(reached + 1, WRITTEN.length - 1);
+  const from = reached >= 0 ? WRITTEN[reached][1] : 0, to = WRITTEN[next][1];
+  const pct = Number.isFinite(to) ? Math.min(100, Math.max(0, ((total - from) / (to - from)) * 100)) : 0;
+  return { reached, next, pct, total, left: Number.isFinite(to) ? Math.max(0, to - total) : Infinity };
+}
+
 // 出遅れ d 分は、その日の枠を d / (300 + d) 枠ぶん減らす (5時間の枠が 5時間+d 分かかるのと同じ)
 export const lostWindowsOf = (delayMin) => delayMin / (300 + delayMin);
 

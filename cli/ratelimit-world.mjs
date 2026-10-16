@@ -17,7 +17,7 @@ import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -182,7 +182,8 @@ export function parseResetText(text, hitMs) {
 // リミット到達: isApiErrorMessage かつ error=rate_limit の合成メッセージ。
 // 新しい版は quotaLimits.{rateLimitType, resetsAt} を持つので、それを優先する。
 const WEEKLY_RE = /(weekly|week|opus limit|sonnet limit|monthly)/i;
-// 応答の時刻 (その時刻に Claude Code を使っていた印。枠の始まりの推定に使う)。トークン数などの中身は読まない
+// 応答の時刻 (その時刻に Claude Code を使っていた印。枠の始まりの推定に使う) と、出力トークン数 (「AI が書いた量」に使う)。
+// 入力や中身は読まない
 // Claude Code のログと、Cowork のセッションの中にある同じ形式のログ (.claude/projects の下だけ)
 function* claudeLogFiles(sinceMs) {
   yield* walkJsonl(path.join(claudeDir(), "projects"), sinceMs);
@@ -225,7 +226,7 @@ export function scanClaude(sinceMs) {
         const ts = Date.parse(ev.timestamp);
         const key = `${m.id}:${ev.requestId}`;
         if (!Number.isFinite(ts) || ts < sinceMs || usage.has(key)) continue;
-        usage.set(key, { ts });
+        usage.set(key, { ts, out: u.output_tokens || 0 });
       } else if (line.includes('"type":"user"') && !line.includes('"tool_result"') && !line.includes('"isMeta":true')) {
         const ev = parseLine(line);
         if (ev?.type !== "user" || ev.isSidechain) continue;
@@ -311,9 +312,9 @@ export function scanCodex(sinceMs) {
           else o.peak = Math.max(o.peak, pct);
         }
         if (wk && wreset && Number(wk.used_percent) >= 100) weekly.push({ ts, reset: wreset });
-        // 応答の時刻 (トークン数などの中身は送らない)
+        // 応答の時刻と出力トークン数 (中身は送らない)
         const u = p.info?.last_token_usage;
-        if (u && (u.input_tokens || u.output_tokens)) usage.push({ ts });
+        if (u && (u.input_tokens || u.output_tokens)) usage.push({ ts, out: u.output_tokens || 0 });
       } else if (line.includes('"task_started"')) {
         const ev = parseLine(line);
         if (ev?.payload?.type !== "task_started") continue;
@@ -459,7 +460,22 @@ export function collect(days) {
     plans: { claude: claudePlan(), codex: codex.current?.plan ?? null },
     nextReset: nextResets(claude, codex),
     sessions: openedSessions(claude, codex, since),
+    output: outputByDay(claude, codex, since),
   };
+}
+
+// 「AI が書いた量」: 出力トークン数を、その PC の日付ごと・ツールごとに足したもの { "2026-10-16": { claude, codex } }
+export function outputByDay(claude, codex, since) {
+  const out = {};
+  for (const [tool, src] of [["claude", claude], ["codex", codex]]) {
+    for (const e of src.usage) {
+      if (e.ts < since || !e.out) continue;
+      const day = new Date(e.ts).toLocaleDateString("en-CA");
+      const d = (out[day] ??= { claude: 0, codex: 0 });
+      d[tool] += e.out;
+    }
+  }
+  return out;
 }
 
 // ---------- network ----------
@@ -480,13 +496,15 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
   if (!cfg.token) { if (!quiet) console.error(L("まだセットアップされていません: ratelimit-world setup", "Not set up yet. Run: ratelimit-world setup")); return false; }
   // hook は毎ターン走るので、直近に送っていれば省略する (リミット到達時は必ず送る)
   if (reason === "hook" && cfg.lastSyncAt && Date.now() - cfg.lastSyncAt < 20_000) return true;
+  // 「AI が書いた量」を始めた版では、最初の 1回だけ過去 60日分の出力トークン数も送る
+  if (!cfg.outputSince) full = true;
   const payload = collect(full ? 60 : 3);
   // プロンプト送信の瞬間に「今使い始めた」と伝える (ログに書かれる前でも再開時刻が分かるように)
   if (active) payload.active = { [active]: Date.now() };
   try {
     const r = await api(cfg, "POST", "/api/sync", payload);
     // サイトで選んでいる言語に表示を合わせる
-    saveConfig({ ...loadConfig(), lastSyncAt: Date.now(), ...(r.lang ? { lang: r.lang } : {}) });
+    saveConfig({ ...loadConfig(), lastSyncAt: Date.now(), ...(r.lang ? { lang: r.lang } : {}), ...(full ? { outputSince: loadConfig().outputSince ?? Date.now() } : {}) });
     // サイトが正式なドメインに移ったら、送り先を切り替える (仮のアドレス *.workers.dev から ratelimit.world へだけ)
     if (r.server === DEFAULT_SERVER && cfg.server !== DEFAULT_SERVER && /\.workers\.dev$/.test(new URL(cfg.server).hostname)) {
       saveConfig({ ...loadConfig(), server: DEFAULT_SERVER });

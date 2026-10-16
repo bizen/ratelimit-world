@@ -291,3 +291,17 @@ test("league: week bounds, XP in the week, zones and settlement", async () => {
   assert.equal(nextTier({ tier: 0, result: "down" }), 0);
   assert.equal(nextTier(null), 0);
 });
+
+test("written level: steps, progress and the last level", async () => {
+  const { writtenLevel, WRITTEN } = await import("../src/logic.js");
+  assert.deepEqual(writtenLevel(0), { reached: -1, next: 0, pct: 0, total: 0, left: 15 });
+  const p = writtenLevel(1.5e6);
+  assert.equal(WRITTEN[p.reached][0], "potter");
+  assert.equal(WRITTEN[p.next][0], "kochikame");
+  assert.ok(p.pct > 0 && p.pct < 10);
+  // 1,000京を超えても、最後のアカシックレコードには届かない
+  const top = writtenLevel(1e20);
+  assert.equal(WRITTEN[top.reached][0], "allSpeech");
+  assert.equal(WRITTEN[top.next][0], "akashic");
+  assert.equal(top.left, Infinity);
+});

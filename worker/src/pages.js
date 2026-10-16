@@ -1,6 +1,6 @@
 // サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js、文言は i18n.js。
 // 各ページは ctx = { user, lang, t, path } を受け取る (t は翻訳関数)
-import { TOOL_NAME, addDays, localTime, comboXp, moodOf, WINDOW_MS } from "./logic.js";
+import { TOOL_NAME, addDays, localTime, comboXp, moodOf, WINDOW_MS, WRITTEN, writtenLevel } from "./logic.js";
 import { clientStrings, tierName, fmtWhen, leagueName } from "./i18n.js";
 import { TIER_EMOJI } from "./league.js";
 
@@ -258,6 +258,44 @@ function leagueCards(ctx, data, s, now) {
   <p class="muted small">${t("lg.rules")}</p>
 </section>`;
   }).join("");
+}
+
+// 「AI が書いた量」: トークン数を「150万」「1.5M」のように短く
+function fmtTokens(lang, n) {
+  if (!Number.isFinite(n)) return "∞";
+  const units = lang === "ja" ? [[1e16, "京"], [1e12, "兆"], [1e8, "億"], [1e4, "万"]] : [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
+  const num = (x) => (x >= 100 ? Math.round(x) : Math.round(x * 10) / 10).toLocaleString("en-US");
+  for (const [v, u] of units) if (n >= v) return `${num(n / v)}${u}`;
+  return Math.round(n).toLocaleString("en-US");
+}
+
+// 今の段階と、次の段までの進み具合 (ダッシュボードとプロフィールの上の部分)
+function writtenHead(ctx, total) {
+  const { t, lang } = ctx;
+  const w = writtenLevel(total);
+  const name = (i) => esc(t(`w.${WRITTEN[i][0]}`));
+  return `<p class="wr-level">${w.reached >= 0 ? `${t("wr.pre")}<b>${name(w.reached)}</b>${t("wr.post")}` : `<span class="muted">${t("wr.none")}</span>`}</p>
+  <div class="wr-bar" role="progressbar" aria-valuenow="${Math.round(w.pct)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${w.pct}%"></i></div>
+  <p class="wr-meta"><span>${t("wr.next", name(w.next), fmtTokens(lang, w.left))}</span><span>${t("wr.total", fmtTokens(lang, total))}</span></p>`;
+}
+
+function writtenCard(ctx, total) {
+  return `<section class="card written" id="written"><h2 class="h3">📚 ${ctx.t("wr.h")}</h2>${writtenHead(ctx, total)}</section>`;
+}
+
+// プロフィール: 段階のはしご。届いた段と次の段は名前を見せ、その先は「？？？」(最後のアカシックレコードだけは見せる)
+function writtenLadder(ctx, total) {
+  const { t, lang } = ctx;
+  const w = writtenLevel(total);
+  const row = (state, name, tok) => `<li class="${state}"><span class="wr-mark" aria-hidden="true">${state === "done" ? "✓" : ""}</span><span class="wr-name">${name}</span><span class="wr-tok">${tok}</span></li>`;
+  const last = WRITTEN.length - 1;
+  const hidden = Math.max(0, last - w.next - 1); // 次の段とアカシックレコードのあいだの、まだ見せない段の数
+  const rows = [
+    w.next < last ? row("ahead", esc(t(`w.${WRITTEN[last][0]}`)), "∞") : "",
+    hidden ? row("ahead", t("wr.hiddenN", hidden), "") : "",
+    ...WRITTEN.slice(0, w.next + 1).map(([key, tokens], i) => row(i <= w.reached ? "done" : "next", esc(t(`w.${key}`)), fmtTokens(lang, tokens))).reverse(),
+  ].join("");
+  return `<section class="card written"><h2 class="h3">📚 ${t("wr.h")}</h2>${writtenHead(ctx, total)}<ol class="wr-ladder">${rows}</ol><p class="muted small">${t("wr.note")}</p></section>`;
 }
 
 // フレンド: 自分とフォローしている人を今週の XP 順に並べる。各行に 🔥連続・今日の枠・今の状況
@@ -565,7 +603,7 @@ function dial(ctx, tool, s, now) {
 </article>`;
 }
 
-export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = [], flash = null, leagues = null }) {
+export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = [], flash = null, leagues = null, written = 0 }) {
   const { user, t, lang } = ctx;
   const now = Date.now();
   const left = Math.max(0, s.goal - s.todayCount);
@@ -628,6 +666,8 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
 </section>
 
 ${leagueCards(ctx, leagues, s, now)}
+
+${writtenCard(ctx, written)}
 
 ${friendsCard(ctx, s, friends, flash, origin, now)}
 
@@ -836,6 +876,7 @@ ${self && !u.public ? `<p class="private-note" role="status">🔒 ${t("p.private
   ${todayTrack(ctx, s, Date.now())}
   ${heatmap(ctx, s)}
 </section>
+${social.written != null ? writtenLadder(ctx, social.written) : ""}
 ${social.ps ? profileRecords(ctx, s, social.ps) : ""}
 ${u.public ? `<section class="card share-card">
   <img src="/@${esc(u.login)}/card.png?lang=${lang}" alt="${esc(t("prof.cardAlt", u.login))}" width="600" height="315">

@@ -133,3 +133,12 @@ CREATE TABLE IF NOT EXISTS league_members (
   PRIMARY KEY (user_id, tool, week)
 );
 CREATE INDEX IF NOT EXISTS league_members_group ON league_members (group_id);
+
+-- 「AI が書いた量」: 出力トークン数を、PC の日付ごと・ツールごとに (CLI が毎回計算し直すので大きい方を残す)
+CREATE TABLE IF NOT EXISTS output_days (
+  user_id INTEGER NOT NULL,
+  day TEXT NOT NULL,                 -- '2026-10-16' (PC のタイムゾーン)
+  tool TEXT NOT NULL,
+  tokens INTEGER NOT NULL,
+  PRIMARY KEY (user_id, day, tool)
+);

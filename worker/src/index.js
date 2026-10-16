@@ -151,6 +151,12 @@ async function statsFor(env, user, now = Date.now()) {
   return { ...computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly, sessions, seed: user.id }), nextReset };
 }
 
+// 「AI が書いた量」の合計 (Claude と ChatGPT の出力トークン数)
+async function writtenTotal(env, userId) {
+  const r = await env.DB.prepare("SELECT COALESCE(SUM(tokens), 0) AS n FROM output_days WHERE user_id = ?").bind(userId).first();
+  return r.n;
+}
+
 // ---------- friends ----------
 const MAX_FOLLOWS = 100;
 
@@ -422,6 +428,21 @@ async function handleSync(req, env) {
         e.ended_at = newStart; e.reset_at = newStart; e.resumed_at ??= newStart;
       }
     }
+  }
+  // 「AI が書いた量」: 日付ごと・ツールごとの出力トークン数。CLI は毎回ログから数え直すので、大きい方を残す
+  const outRows = [];
+  if (body.output && typeof body.output === "object") {
+    for (const [day, v] of Object.entries(body.output).slice(0, 80)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Math.abs(Date.parse(day) - now) > 72 * DAY) continue;
+      for (const tool of TOOLS) {
+        const n = Math.round(Number(v?.[tool]));
+        if (Number.isFinite(n) && n > 0 && n < 1e10) outRows.push([day, tool, n]);
+      }
+    }
+  }
+  for (const [day, tool, n] of outRows) {
+    stmts.push(env.DB.prepare("INSERT INTO output_days (user_id, day, tool, tokens) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, day, tool) DO UPDATE SET tokens = MAX(tokens, excluded.tokens)")
+      .bind(user.id, day, tool, n));
   }
   stmts.push(env.DB.prepare("UPDATE users SET tz = ?, claude_plan = ?, codex_plan = ?, next_reset = ?, last_sync_at = ? WHERE id = ?")
     .bind(tz, claudePlan, codexPlan, JSON.stringify(nextReset), now, user.id));
@@ -791,8 +812,8 @@ async function route(req, env) {
       "SELECT tool, tier, MAX(week) AS week FROM league_members WHERE user_id = ? GROUP BY tool",
     ).bind(u.id).all();
     const social = { followers: followers.n, following: !!following, flash: url.searchParams.get("friend"), leagues: u.public ? lg : [] };
-    const { s, p: ps } = await profileData(env, u);
-    return html(pages.profile(ctx, u, s, origin, { ...social, ps }));
+    const [{ s, p: ps }, written] = await Promise.all([profileData(env, u), writtenTotal(env, u.id)]);
+    return html(pages.profile(ctx, u, s, origin, { ...social, ps, written }));
   }
 
   // ここから先はログインが必要
@@ -816,7 +837,8 @@ async function route(req, env) {
     try { await syncLeagues(env, user); } catch (e) { console.log("league sync", e.message); }
     const [s, friends, leagues] = await Promise.all([statsFor(env, user), friendsOf(env, user), leaguesFor(env, user)]);
     const flash = { kind: url.searchParams.get("friend"), who: url.searchParams.get("who") };
-    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user), friends, flash, leagues }));
+    const written = await writtenTotal(env, user.id);
+    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user), friends, flash, leagues, written }));
   }
   if (p.startsWith("/api/")) {
     if (!user) return json({ error: "unauthorized" }, 401);

@@ -707,3 +707,18 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .final-cta p { margin: 0 0 20px; opacity: .8; }
 .foot .gh { margin-left: auto; margin-right: 12px; font-weight: 700; font-size: 14px; color: var(--muted); text-decoration: none; }
 .foot .gh:hover { color: var(--violet); }
+
+/* AI が書いた量 */
+.wr-level { margin: 8px 0 10px; font-size: 15px; font-weight: 700; line-height: 1.5; color: var(--muted); }
+.wr-level b { font-family: var(--display); font-weight: 400; font-size: clamp(19px, 5vw, 26px); color: var(--ink); }
+.wr-bar { height: 12px; border-radius: 999px; background: var(--paper); border: 2px solid var(--line); overflow: hidden; }
+.wr-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--violet), var(--ember)); border-radius: 999px; }
+.wr-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin: 8px 0 0; font-size: 13px; font-weight: 700; color: var(--muted); }
+.wr-ladder { list-style: none; padding: 0; margin: 16px 0 10px; display: grid; gap: 4px; }
+.wr-ladder li { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; padding: 7px 10px; border-radius: 10px; font-size: 14px; }
+.wr-ladder li.done { color: var(--ink); }
+.wr-ladder li.done .wr-mark { color: var(--go); font-weight: 700; }
+.wr-ladder li.next { background: var(--violet-soft); font-weight: 700; }
+.wr-ladder li.next .wr-mark::before { content: "▶"; color: var(--violet); font-size: 11px; }
+.wr-ladder li.ahead { color: var(--muted); }
+.wr-tok { font: 700 12px var(--mono); color: var(--muted); }
