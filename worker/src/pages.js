@@ -148,6 +148,8 @@ export function landing(ctx, origin) {
 }
 
 // ---------- dashboard ----------
+// 統計カードの数字。桁が多いと幅の狭いカード (スマホ) からはみ出すので、文字数を渡して大きさを合わせる
+const statNum = (v) => `<b style="--n:${String(v).length}">${v}</b>`;
 // キャラクター「リミ」: まるい体に小さな炎。表情 (目と口) だけを気分で変える
 function limi(mood) {
   const eyes = {
@@ -546,10 +548,10 @@ export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = 
     bodyClass: "dash",
     body: `
 <section class="stats-row" aria-label="${t("dash.stats")}">
-  <div class="stat flame"><b>${s.streak}</b><span>${t("stat.streak")}</span></div>
-  <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>${t("stat.weekXp")}</span></div>
-  <div class="stat ice" title="${t("stat.freezes.tip")}"><b>${s.freezes}</b><span>${t("stat.freezes")}</span><small class="next">${s.freezeIn == null ? t("stat.freezes.max") : t("stat.freezes.in", s.freezeIn)}</small></div>
-  ${s.trophies ? `<div class="stat trophy" title="${t("stat.trophies.tip")}"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
+  <div class="stat flame">${statNum(s.streak)}<span>${t("stat.streak")}</span></div>
+  <div class="stat xp">${statNum(s.weekXp.toLocaleString())}<span>${t("stat.weekXp")}</span></div>
+  <div class="stat ice" title="${t("stat.freezes.tip")}">${statNum(s.freezes)}<span>${t("stat.freezes")}</span><small class="next">${s.freezeIn == null ? t("stat.freezes.max") : t("stat.freezes.in", s.freezeIn)}</small></div>
+  ${s.trophies ? `<div class="stat trophy" title="${t("stat.trophies.tip")}">${statNum(s.trophies)}<span>${t("stat.trophies")}</span></div>` : ""}
 </section>
 ${weekStrip(ctx, s)}
 ${mascot(ctx, s, now)}
@@ -792,11 +794,11 @@ export function profile(ctx, u, s, origin, social = {}) {
 </section>
 ${social.flash === "added" ? `<p class="fr-flash" role="status">${t("fr.added", esc(u.login))} <a href="/me#friends">${t("fr.seeAll")}</a></p>` : ""}
 <section class="stats-row">
-  <div class="stat flame"><b>${s.streak}</b><span>${t("stat.streak")}</span></div>
-  <div class="stat"><b>${s.bestStreak}</b><span>${t("stat.best")}</span></div>
-  <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>${t("stat.weekXp")}</span></div>
-  <div class="stat"><b>${s.total}</b><span>${t("stat.total")}</span></div>
-  ${s.trophies ? `<div class="stat trophy"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
+  <div class="stat flame">${statNum(s.streak)}<span>${t("stat.streak")}</span></div>
+  <div class="stat">${statNum(s.bestStreak)}<span>${t("stat.best")}</span></div>
+  <div class="stat xp">${statNum(s.weekXp.toLocaleString())}<span>${t("stat.weekXp")}</span></div>
+  <div class="stat">${statNum(s.total)}<span>${t("stat.total")}</span></div>
+  ${s.trophies ? `<div class="stat trophy">${statNum(s.trophies)}<span>${t("stat.trophies")}</span></div>` : ""}
 </section>
 ${self && !u.public ? `<p class="private-note" role="status">🔒 ${t("p.private")} <a href="/me#settings">${t("p.private.link")}</a></p>` : ""}
 <section class="card">
