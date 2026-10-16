@@ -425,3 +425,5 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .dial.using .fill { opacity: .55; }
 .dial-foot .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .dial-foot .pair > div { display: grid; gap: 1px; }
+.toggle .hint { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }
+.settings .toggle { align-items: flex-start; }

@@ -284,7 +284,7 @@ async function handleSync(req, env) {
   } else if (s.todayDone && prefs.goal && (await claim(env, user.id, `goal:${s.today}`))) {
     await pushToUser(env, user.id, notice(fresh, "goal", s, now));
   }
-  return json({ ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak, lang: user.lang ?? null });
+  return json({ ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak, lang: user.lang ?? null, statusline: !!user.claude_statusline });
 }
 
 // ---------- CLI ログイン (デバイスフロー) ----------
@@ -341,8 +341,9 @@ async function saveSettings(req, env, user) {
   for (const k of Object.keys(n)) if (typeof b.notify?.[k] === "boolean") n[k] = b.notify[k];
   const pub = typeof b.public === "boolean" ? (b.public ? 1 : 0) : user.public;
   const lang = LANGS.includes(b.lang) ? b.lang : user.lang;
-  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify = ?, public = ?, lang = ? WHERE id = ?")
-    .bind(goal, tz, remindAt, JSON.stringify(n), pub, lang, user.id).run();
+  const statusline = typeof b.statusline === "boolean" ? (b.statusline ? 1 : 0) : user.claude_statusline;
+  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify = ?, public = ?, lang = ?, claude_statusline = ? WHERE id = ?")
+    .bind(goal, tz, remindAt, JSON.stringify(n), pub, lang, statusline, user.id).run();
   // 画面の言語も合わせる
   return json({ ok: true }, 200, lang ? { "set-cookie": langCookie(lang) } : {});
 }

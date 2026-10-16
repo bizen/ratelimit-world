@@ -218,7 +218,7 @@ function windowRow(ctx, tool, s, now, limitedAt) {
     </div>`;
 }
 
-// 週間枠の使用率 (正確な値が分かる Codex のみ)
+// 週間枠の使用率 (Codex はログから、Claude Code はステータスラインの中継がオンのときだけ)
 function weekRow(ctx, tool, s, now) {
   const w = s.nextReset?.[tool]?.week;
   if (!w || !(w.resetAt > now)) return "";
@@ -358,6 +358,7 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
       ${chk("pinch")}
       ${chk("goal")}
     </fieldset>
+    <label class="toggle"><input type="checkbox" name="statusline" ${user.claude_statusline ? "checked" : ""}><span>${t("settings.statusline")}<small class="hint">${t("settings.statusline.hint")}</small></span></label>
     <label class="toggle"><input type="checkbox" name="public" ${user.public ? "checked" : ""}><span>${t("settings.public")}</span></label>
     <div class="row"><button class="btn">${t("settings.save")}</button><span class="status" data-settings-status role="status"></span></div>
   </form>
