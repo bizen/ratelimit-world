@@ -122,12 +122,9 @@ async function userWeekly(env, userId, days = STATS_DAYS) {
   return results;
 }
 
-const parseUsage = (u) => { try { return JSON.parse(u.usage || "null") ?? {}; } catch { return {}; } };
-
 async function statsFor(env, user, now = Date.now()) {
   const [ws, weekly] = await Promise.all([userWindows(env, user.id), userWeekly(env, user.id)]);
-  const s = computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly });
-  return { ...s, usage: parseUsage(user) };
+  return computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly });
 }
 
 // 同じ通知を二度送らない。初めてなら true
@@ -206,17 +203,6 @@ async function handleSync(req, env) {
     }
   }
 
-  // 使用率 (5時間枠・週間枠の %)。届いたツールだけ上書きする
-  const usageObj = parseUsage(user);
-  const lim = (x) => (x && Number.isFinite(x.pct) && isTime(x.resetAt) ? { pct: Math.max(0, Math.min(100, x.pct)), resetAt: x.resetAt } : null);
-  for (const tool of TOOLS) {
-    const u = body.usage?.[tool];
-    if (u && isTime(u.at) && u.at <= now + MIN && (!usageObj[tool] || u.at >= usageObj[tool].at)) {
-      usageObj[tool] = { at: u.at, five: lim(u.five), week: lim(u.week) };
-    }
-  }
-  const usage = JSON.stringify(usageObj);
-
   // 週間リミットの到達
   const weeklyIn = (Array.isArray(body.weeklyHits) ? body.weeklyHits : []).slice(0, 100).filter((w) =>
     TOOLS.has(w.tool) && isTime(w.hitAt) && isTime(w.resetAt) && w.hitAt <= now + 5 * MIN && w.resetAt > w.hitAt && w.resetAt - w.hitAt <= 7 * DAY + HOUR);
@@ -235,11 +221,11 @@ async function handleSync(req, env) {
   const plan = (v, prev) => (typeof v === "string" && /^[a-z0-9_]{1,20}$/.test(v) ? v : prev);
   const claudePlan = plan(body.plans?.claude, user.claude_plan);
   const codexPlan = plan(body.plans?.codex, user.codex_plan);
-  stmts.push(env.DB.prepare("UPDATE users SET usage = ?, tz = ?, claude_plan = ?, codex_plan = ?, last_sync_at = ? WHERE id = ?")
-    .bind(usage, tz, claudePlan, codexPlan, now, user.id));
+  stmts.push(env.DB.prepare("UPDATE users SET tz = ?, claude_plan = ?, codex_plan = ?, last_sync_at = ? WHERE id = ?")
+    .bind(tz, claudePlan, codexPlan, now, user.id));
   await env.DB.batch(stmts);
 
-  const fresh = { ...user, tz, usage };
+  const fresh = { ...user, tz };
   const s = await statsFor(env, fresh, now);
   const prefs = parseNotify(fresh);
   // 週間リミットに当たったばかりなら、いちばん大きなごほうびを知らせる
@@ -382,27 +368,25 @@ async function leaderboards(env, now = Date.now()) {
 async function runCron(env, now = Date.now()) {
   // 1) リセット通知: 直近 3分以内にリセットされた枠
   const due = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify, u.usage FROM windows w JOIN users u ON u.id = w.user_id
+    `SELECT w.*, u.tz, u.goal, u.notify FROM windows w JOIN users u ON u.id = w.user_id
      WHERE w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
   ).bind(now - 3 * MIN, now).all();
   for (const w of due.results) {
     if (!parseNotify(w).reset) continue;
     if (!(await claim(env, w.user_id, `reset:${w.tool}:${w.reset_at}`))) continue;
-    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal, usage: w.usage }, now);
+    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal }, now);
     await pushToUser(env, w.user_id, msg.reset(w.tool, s, now));
   }
 
   // 2) 出遅れ通知: リセットから 10分たっても再開していない枠
   const late = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify, u.usage FROM windows w JOIN users u ON u.id = w.user_id
+    `SELECT w.*, u.tz, u.goal, u.notify FROM windows w JOIN users u ON u.id = w.user_id
      WHERE w.resumed_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
   ).bind(now - LATE_AFTER - 5 * MIN, now - LATE_AFTER).all();
   for (const w of late.results) {
     if (!parseNotify(w).late) continue;
-    // 使用率はツールを使うたびに届くので、リセット後の記録があれば再開済み
-    if (parseUsage(w)[w.tool]?.at > w.reset_at) continue;
     if (!(await claim(env, w.user_id, `late:${w.tool}:${w.reset_at}`))) continue;
-    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal, usage: w.usage }, now);
+    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal }, now);
     await pushToUser(env, w.user_id, msg.late(w.tool, Math.round((now - w.reset_at) / MIN), s, now));
   }
 

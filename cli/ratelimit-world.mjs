@@ -22,7 +22,6 @@ const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
 const INSTALLED_SCRIPT = path.join(HOME, "ratelimit-world.mjs");
 const LOG_FILE = path.join(HOME, "sync.log");
-const CLAUDE_USAGE_FILE = path.join(HOME, "claude-usage.json");   // ステータスラインから受け取った使用率
 const SELF = fileURLToPath(import.meta.url);
 
 const HOUR = 3600 * 1000;
@@ -158,25 +157,6 @@ export function scanClaude(sinceMs) {
   return { hits, weekly, activity };
 }
 
-// Claude Code のステータスラインに渡される rate_limits を保存する (ログには使用率が残らないため)。
-// resets_at は秒・ミリ秒・ISO 文字列のどれでも受ける
-const toMs = (v) => (v == null ? null : typeof v === "number" ? epochMs(v) : /^\d+$/.test(String(v)) ? epochMs(+v) : Date.parse(v) || null);
-function recordClaudeUsage(input) {
-  const rl = input?.rate_limits;
-  if (!rl) return;
-  const now = Date.now();
-  const cur = readJson(CLAUDE_USAGE_FILE, {});
-  const pick = (x) => (x && x.used_percentage != null ? { pct: Number(x.used_percentage), resetAt: toMs(x.resets_at) } : null);
-  const five = pick(rl.five_hour), week = pick(rl.seven_day);
-  const next = { at: now, five, week, weeklyHits: cur.weeklyHits ?? [] };
-  // 週間枠が 100% になったら到達として覚えておく (次の送信で届ける)
-  if (week && week.pct >= 100 && week.resetAt && !next.weeklyHits.some((h) => Math.abs(h.resetAt - week.resetAt) < HOUR)) {
-    next.weeklyHits.push({ hitAt: now, resetAt: week.resetAt });
-  }
-  next.weeklyHits = next.weeklyHits.filter((h) => h.resetAt > now - 30 * DAY);
-  try { writeJson(CLAUDE_USAGE_FILE, next); } catch {}
-}
-
 // ---------- Codex ----------
 // token_count イベントの rate_limits に 5時間枠 (300分) と週間枠 (10080分) の使用率とリセット時刻が毎回入る。
 function limitOf(rl, minutes) {
@@ -199,14 +179,8 @@ export function scanCodex(sinceMs) {
         if (!Number.isFinite(ts) || ts < sinceMs) continue;
         const lim = limitOf(p.rate_limits, 300), wk = limitOf(p.rate_limits, 10080);
         const reset = lim && resetOf(lim, ts), wreset = wk && resetOf(wk, ts);
-        if (!current || ts > current.at) {
-          current = {
-            at: ts,
-            five: lim && reset ? { pct: Number(lim.used_percent), resetAt: reset } : null,
-            week: wk && wreset ? { pct: Number(wk.used_percent), resetAt: wreset } : null,
-            plan: p.rate_limits?.plan_type ?? null,
-          };
-        }
+        // 使用率そのものは送らない (使っていないときは古い数字になるため)。到達の判定とプランだけに使う
+        if (!current || ts > current.at) current = { at: ts, plan: p.rate_limits?.plan_type ?? null };
         if (lim && reset && Number(lim.used_percent) >= 100) hits.push({ ts, reset });
         if (wk && wreset && Number(wk.used_percent) >= 100) weekly.push({ ts, reset: wreset });
       } else if (line.includes('"task_started"')) {
@@ -271,20 +245,15 @@ export function collect(days) {
   // 再開時刻を求めるため、到達より少し前からのログも読む
   const claude = scanClaude(since - WINDOW_MS);
   const codex = scanCodex(since - WINDOW_MS);
-  const cu = readJson(CLAUDE_USAGE_FILE, null);
-  const claudeUsage = cu && cu.at > Date.now() - 6 * HOUR ? { at: cu.at, five: cu.five, week: cu.week } : null;
-  const claudeWeekly = [...claude.weekly, ...(cu?.weeklyHits ?? []).map((h) => ({ ts: h.hitAt, reset: h.resetAt }))];
   const windows = [...toWindows("claude", claude), ...toWindows("codex", codex)]
     .filter((w) => w.resetAt >= since)
     .sort((a, b) => a.hitAt - b.hitAt);
-  const weeklyHits = [...toWeekly("claude", claudeWeekly), ...toWeekly("codex", codex.weekly)].filter((w) => w.resetAt >= since);
-  const { plan: codexPlan, ...codexUsage } = codex.current ?? {};
+  const weeklyHits = [...toWeekly("claude", claude.weekly), ...toWeekly("codex", codex.weekly)].filter((w) => w.resetAt >= since);
   return {
     client: { version: VERSION, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, platform: process.platform },
     windows,
     weeklyHits,
-    usage: { claude: claudeUsage, codex: codex.current ? codexUsage : null },
-    plans: { claude: claudePlan(), codex: codexPlan ?? null },
+    plans: { claude: claudePlan(), codex: codex.current?.plan ?? null },
   };
 }
 
@@ -345,7 +314,7 @@ function hook(tool, event, rest) {
 const nodeCmd = () => (process.execPath.includes(" ") ? `"${process.execPath}"` : process.execPath);
 const claudeHookCmd = (event) => `${nodeCmd()} "${INSTALLED_SCRIPT}" hook claude ${event}`;
 
-function installClaudeHooks(cfg) {
+function installClaudeHooks() {
   const file = path.join(claudeDir(), "settings.json");
   const s = readJson(file, null) ?? (fs.existsSync(file) ? null : {});
   if (!s) throw new Error(`${file} を読めませんでした (JSON の形式を確認してください)`);
@@ -358,36 +327,8 @@ function installClaudeHooks(cfg) {
   add("StopFailure", "rate_limit", claudeHookCmd("limit")); // リミットに当たった瞬間
   add("UserPromptSubmit", null, claudeHookCmd("prompt"));   // 使い始めた瞬間 (出遅れの計測)
   add("Stop", null, claudeHookCmd("stop"));                 // 毎ターン終わり (Codex 分もここで拾う)
-  // ステータスラインに渡される使用率 (5時間枠・週間枠の %) を受け取るため、間に入る。
-  // 元のステータスラインがあれば、同じ入力でそれを呼んで表示はそのまま出す
-  const ours = `${nodeCmd()} "${INSTALLED_SCRIPT}" statusline`;
-  if (s.statusLine && !JSON.stringify(s.statusLine).includes(HOOK_MARK)) cfg.prevClaudeStatusLine = s.statusLine;
-  s.statusLine = { ...(cfg.prevClaudeStatusLine ?? {}), type: "command", command: ours };
   writeJson(file, s);
   return file;
-}
-
-// Claude Code のステータスラインとして呼ばれる。使用率を記録して、元のステータスラインの出力を返す
-async function statusline() {
-  let input = "";
-  for await (const chunk of process.stdin) input += chunk;
-  let data = null;
-  try { data = JSON.parse(input); } catch {}
-  recordClaudeUsage(data);
-  const prev = loadConfig().prevClaudeStatusLine;
-  if (prev?.command) {
-    const child = spawn(prev.command, { shell: true, stdio: ["pipe", "inherit", "inherit"] });
-    child.on("error", () => {});
-    child.stdin.on("error", () => {});
-    child.stdin.end(input);
-    await new Promise((r) => child.on("close", r));
-    return;
-  }
-  // 元のステータスラインがない人には、使用率を短く出す
-  const rl = data?.rate_limits;
-  const f = (x, label) => (x?.used_percentage != null ? `${label} ${Math.round(x.used_percentage)}%` : null);
-  const parts = [f(rl?.five_hour, "5h"), f(rl?.seven_day, "週")].filter(Boolean);
-  if (parts.length) process.stdout.write(`🔥 ${parts.join(" · ")}`);
 }
 
 function removeClaudeHooks() {
@@ -397,10 +338,6 @@ function removeClaudeHooks() {
   for (const ev of Object.keys(s.hooks)) {
     s.hooks[ev] = s.hooks[ev].filter((g) => !JSON.stringify(g).includes(HOOK_MARK));
     if (!s.hooks[ev].length) delete s.hooks[ev];
-  }
-  if (JSON.stringify(s.statusLine ?? "").includes(HOOK_MARK)) {
-    const prev = loadConfig().prevClaudeStatusLine;
-    if (prev) s.statusLine = prev; else delete s.statusLine;
   }
   writeJson(file, s);
 }
@@ -472,8 +409,8 @@ async function setup(server) {
   saveConfig(cfg);
   console.log(`✅ @${cfg.login} としてログインしました`);
 
-  const c = installClaudeHooks(cfg);
-  console.log(`✅ Claude Code の hooks とステータスラインを登録しました (${c})${cfg.prevClaudeStatusLine ? "。元のステータスラインもそのまま表示されます" : ""}`);
+  const c = installClaudeHooks();
+  console.log(`✅ Claude Code の hooks を登録しました (${c})`);
   try {
     const x = installCodexNotify(cfg);
     if (x) console.log(`✅ Codex の notify を登録しました (${x})${cfg.prevCodexNotify ? "。元の notify も引き続き呼ばれます" : ""}`);
@@ -525,11 +462,6 @@ function status() {
     const late = w.resumedAt ? `${Math.round((w.resumedAt - w.resetAt) / 60000)}分後に再開` : "未再開";
     console.log(`  ${w.tool.padEnd(6)} 到達 ${fmt(w.hitAt)} → リセット ${fmt(w.resetAt)} (${late})`);
   }
-  for (const [tool, u] of Object.entries(p.usage)) {
-    if (!u) continue;
-    const part = (x, label) => (x ? `${label} ${Math.round(x.pct)}% (${fmt(x.resetAt)} にリセット)` : null);
-    console.log(`\n${tool === "claude" ? "Claude Code" : "Codex"}: ${[part(u.five, "5時間枠"), part(u.week, "週間枠")].filter(Boolean).join(" / ")}  [${fmt(u.at)} 時点]`);
-  }
   if (p.weeklyHits.length) console.log(`\n🏆 週間リミット到達: ${p.weeklyHits.map((w) => `${w.tool} ${fmt(w.hitAt)}`).join(", ")}`);
 }
 
@@ -545,14 +477,13 @@ if (isMain) {
     if (cmd === "setup") await setup(flag("--server"));
     else if (cmd === "sync") process.exitCode = (await sync({ full: argv.includes("--full"), quiet: argv.includes("--quiet"), reason: flag("--reason") || "manual", active: flag("--active") })) ? 0 : 1;
     else if (cmd === "hook") hook(argv[1], argv[2], argv.slice(3));
-    else if (cmd === "statusline") await statusline();
     else if (cmd === "scan") console.log(JSON.stringify(collect(Number(flag("--days")) || 7), null, 2));
     else if (cmd === "status") status();
     else if (cmd === "uninstall") uninstall();
     else console.log(`ratelimit-world ${VERSION}\n\n  setup [--server URL]  ログインして hooks を登録\n  sync [--full]         今すぐ送信\n  status                直近の到達と送信状況\n  scan [--days N]       送る内容を表示 (通信なし)\n  uninstall             hooks を外して削除`);
   } catch (e) {
     // hook から呼ばれたときに Claude Code / Codex を止めないよう、失敗は記録だけして終わる
-    if (cmd === "hook" || cmd === "statusline") log(`${cmd} error: ${e.message}`);
+    if (cmd === "hook") log(`hook error: ${e.message}`);
     else { console.error(`エラー: ${e.message}`); process.exitCode = 1; }
   }
 }

@@ -14,7 +14,7 @@
       const clock = $(".clock", d);
       if (left <= 0) {
         // リセットの瞬間: GO に切り替える
-        d.classList.remove("limited", "using");
+        d.classList.remove("limited", "weekly");
         d.classList.add("ready");
         delete d.dataset.reset;
         $(".ring-text small", d).textContent = "今すぐ再開！";

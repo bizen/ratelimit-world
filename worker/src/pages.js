@@ -167,13 +167,11 @@ function heatmap(s, days = 28) {
   return `<div class="heat" role="img" aria-label="直近${days}日の到達回数">${cells}</div>`;
 }
 
-// ツールごとの「次のリセット」ダイヤル。使用率 (5時間枠・週間枠) が届いていれば一緒に出す
+// ツールごとの「次のリセット」ダイヤル
 function dial(tool, s, now) {
   const t = s.tools[tool];
-  const u = s.usage?.[tool];
   const last = s.lastReset[tool];
   const lock = s.weeklyLocks.find((w) => w.tool === tool);
-  const fresh = u && u.at > (last?.reset_at ?? 0);
   let state, resetAt = null, frac = 0, sub;
   if (lock) {
     state = "weekly";
@@ -185,21 +183,15 @@ function dial(tool, s, now) {
     resetAt = t.resetAt;
     frac = Math.min(1, Math.max(0, (t.resetAt - now) / WINDOW_MS));
     sub = `${localTime(t.resetAt, s.tz)} にリセット`;
-  } else if (fresh && u.five && u.five.resetAt > now) {
-    state = "using";
-    resetAt = u.five.resetAt;
-    frac = Math.min(1, u.five.pct / 100);
-    sub = `${Math.round(u.five.pct)}% 使用 · ${localTime(u.five.resetAt, s.tz)} にリセット`;
   } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
     state = "ready";
     sub = `${localTime(last.reset_at, s.tz)} にリセット済み`;
   } else {
     state = "idle";
-    sub = "使い始めると、ここに使用率が出ます";
+    sub = "リミットに当たると、ここでリセットまで数えます";
   }
-  const week = u?.week && u.week.resetAt > now ? u.week : null;
   const R = 52, C = 2 * Math.PI * R;
-  const label = { limited: "リセットまで", using: "5時間枠", ready: "今すぐ再開！", idle: "待機中", weekly: "週間リセットまで" }[state];
+  const label = { limited: "リセットまで", ready: "今すぐ再開！", idle: "待機中", weekly: "週間リセットまで" }[state];
   return `
 <article class="dial ${state}" data-tool="${tool}" ${resetAt ? `data-reset="${resetAt}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
   <h3>${TOOL_NAME[tool]}</h3>
@@ -211,7 +203,6 @@ function dial(tool, s, now) {
     <div class="ring-text"><small>${label}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
   </div>
   <p class="dial-sub">${esc(sub)}</p>
-  ${week && !lock ? `<div class="week"><span>週間枠 ${Math.round(week.pct)}%</span><div class="week-bar"><i style="width:${Math.min(100, week.pct)}%"></i></div></div>` : ""}
 </article>`;
 }
 

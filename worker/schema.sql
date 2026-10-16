@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS users (
   public INTEGER NOT NULL DEFAULT 1,
   claude_plan TEXT,                                -- 'pro' | 'max_5x' | 'max_20x' ... (CLI が ~/.claude.json から読む)
   codex_plan TEXT,                                 -- 'plus' | 'pro' ... (Codex のログの plan_type)
-  usage TEXT,                                      -- 直近の使用率 {claude|codex: {at, five: {pct, resetAt}, week: {pct, resetAt}}}
   last_sync_at INTEGER,
   onboarded_at INTEGER,                            -- /welcome を終えた時刻
   created_at INTEGER NOT NULL
