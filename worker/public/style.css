@@ -462,3 +462,26 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .slot.ended { border: 2px solid var(--line); background: var(--surface); color: var(--muted); }
 .slot.active b, .slot.ended b { font-size: 16px; }
 .today-head .opened { width: 100%; margin: -2px 0 0; font-size: 12px; color: var(--muted); font-weight: 700; }
+
+/* 今日のタスク (デイリークエスト) */
+.quest { margin-top: 14px; padding-top: 14px; border-top: 2px solid var(--line); }
+.quest-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.quest-head b { font-size: 15px; }
+.q-icon { font-size: 18px; }
+.q-prog { margin-left: auto; font: 700 14px var(--mono); color: var(--violet); }
+.q-bar { height: 10px; border-radius: 999px; background: var(--violet-soft); overflow: hidden; margin: 8px 0 4px; }
+.q-bar i { display: block; height: 100%; background: var(--violet); border-radius: 999px; }
+.q-bar.quick { background: color-mix(in srgb, var(--go) 18%, var(--surface)); }
+.q-bar.quick i { background: var(--go); }
+.resets { list-style: none; padding: 0; margin: 10px 0 6px; display: grid; gap: 6px; }
+.resets li { display: grid; grid-template-columns: 46px auto 1fr; gap: 8px; align-items: baseline; font-size: 13px; }
+.resets time { font: 700 13px var(--mono); }
+.resets .tool { font-weight: 700; color: var(--muted); font-size: 12px; }
+.resets .what { text-align: right; }
+.resets .ok .what { color: var(--go); font-weight: 700; }
+.resets .late .what { color: var(--ember); }
+.resets .wait .what { color: var(--ember); font-weight: 700; }
+.resets .future { opacity: .55; }
+.warmup { margin: 8px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--violet-soft); font-size: 13px; }
+.warmup .soon { font: 700 11px var(--body); color: #fff; background: var(--muted); border-radius: 999px; padding: 1px 8px; margin-left: 4px; white-space: nowrap; }
+.resets .rest { opacity: .55; }

@@ -196,6 +196,21 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     if (tw) { o.n = tw.n; o.xp = tw.xp; }
   }
 
+  // 「リセット後すぐ再開」タスク: 今日リセットされた (される) 使い切りの枠ごとに、再開までの時間
+  const todayResets = ws.filter((w) => dayKey(w.reset_at, tz) === today).map((w) => {
+    const passed = w.reset_at <= now;
+    const d = w.resumed_at != null ? Math.max(0, w.resumed_at - w.reset_at) : null;
+    const ticket = !!w.ended_at;
+    // 3時間以上あとの再開 (または 3時間以上たっても未再開) は寝ていた・休んでいたとみなし、タスクに数えない
+    const rest = !ticket && passed && (d != null ? d > CHASE_MS : now - w.reset_at > CHASE_MS);
+    return {
+      tool: w.tool, resetAt: w.reset_at, passed, ticket, rest,
+      delayMin: d == null ? null : Math.round(d / MIN),
+      quick: ticket || (d != null && d <= QUICK_MS),
+      waiting: passed && !rest && w.resumed_at == null,
+    };
+  }).sort((a, b) => a.resetAt - b.resetAt);
+
   // 今日を除いた 1日の最多枠数 (今日それを超えたら自己ベスト更新)
   let bestDay = 0;
   for (const [k, d] of Object.entries(days)) if (k !== today) bestDay = Math.max(bestDay, d.count);
@@ -210,6 +225,9 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     lastHitByTool: Object.fromEntries(["claude", "codex"].map((tool) => [tool, ws.filter((w) => w.tool === tool).at(-1)?.hit_at ?? null])),
     todayWindows,
     todayOpened,
+    todayResets,
+    todayQuick: todayResets.filter((r) => r.passed && !r.rest && r.quick).length,
+    todayResetsPassed: todayResets.filter((r) => r.passed && !r.rest).length,
     todayOpenedCount: todayOpened.length,
     todayXp: days[today]?.xp ?? 0,
     tier: tierOf(todayCount, goal),

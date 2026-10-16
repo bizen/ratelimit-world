@@ -193,3 +193,20 @@ test("today's track lists every opened window with its state", () => {
   assert.equal(s.todayOpenedCount, 3);
   assert.equal(s.todayOpened[0].xp, 100);
 });
+
+test("quick-restart task lists today's resets with their delay", () => {
+  const now = jst("2026-10-16T18:00:00");
+  const ws = [
+    win("codex", "2026-10-16T09:00:00", "2026-10-16T12:00:00", "2026-10-16T12:03:00"),  // 3分後 → 達成
+    { ...win("claude", "2026-10-16T13:00:00", "2026-10-16T16:00:00", "2026-10-16T15:50:00"), reset_at: jst("2026-10-16T15:50:00"), ended_at: jst("2026-10-16T15:50:00") }, // チケット
+    win("codex", "2026-10-16T14:00:00", "2026-10-16T16:30:00", "2026-10-16T16:45:00"),  // 15分後 → 未達
+    win("claude", "2026-10-16T17:00:00", "2026-10-16T21:00:00", null),                    // これから
+  ];
+  const s = computeStats(ws, { tz: TZ, goal: 2, now });
+  assert.deepEqual(s.todayResets.map((r) => [r.tool, r.passed, r.quick, r.ticket]), [["codex", true, true, false], ["claude", true, true, true], ["codex", true, false, false], ["claude", false, false, false]]);
+  assert.equal(s.todayQuick, 2);
+  assert.equal(s.todayResetsPassed, 3);
+  const s2 = computeStats([win("codex", "2026-10-16T00:10:00", "2026-10-16T01:17:00", "2026-10-16T04:31:00")], { tz: TZ, goal: 2, now });
+  assert.equal(s2.todayResets[0].rest, true);
+  assert.equal(s2.todayResetsPassed, 0);
+});

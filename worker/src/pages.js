@@ -191,37 +191,43 @@ function nextWindowText(ctx, s, now) {
   return at ? ctx.t("today.nextAt", localTime(at, s.tz)) : ctx.t("today.nextNow");
 }
 
-// 今日のトラック: 1マス = 1枠。開けた枠を時刻順に並べ、状態で塗り分ける
-//   使い切った (塗りつぶし・XP) / 使用中 (使用率の分だけ下から塗る) / 使い切らずに終了 (枠線だけ・到達%)
-// そのあとに次に開ける枠と、目標までの空きマスを並べる (先のマスにも XP を見せる)
+// 今日のトラック: 使い切った枠を、目標に向けて 1マスずつ積む。先のマスにも XP を見せて、次を取りたくさせる
 function todayTrack(ctx, s, now) {
   const { t } = ctx;
-  const name = (tool) => (tool === "claude" ? "Claude" : "Codex");
-  let out = "", potential = 0;
-  // 目標の札は「使い切れば目標に届く」マスに付ける (終わった枠は数えない)
-  const goalMark = () => (++potential === s.goal ? ` goal" data-goal-label="${t("slot.goal")}` : "");
-  for (const o of s.todayOpened) {
-    if (o.status === "maxed") {
-      out += `<li class="slot done${goalMark()}" style="--i:${o.n ?? 1}" data-n="${o.n ?? ""}"><b>${o.n ?? ""}</b><span class="tool">${name(o.tool)}</span><span class="xp">${o.xp ? `+${o.xp}` : ""}</span></li>`;
-    } else if (o.status === "active") {
-      const p = o.pct == null ? null : Math.round(o.pct);
-      out += `<li class="slot active${goalMark()}" style="--p:${p ?? 0}%"><b>${p == null ? "…" : `${p}%`}</b><span class="tool">${name(o.tool)}</span><span class="xp">${t("slot.active")}</span></li>`;
-    } else {
-      out += `<li class="slot ended"><b>${o.pct == null ? "—" : `${Math.round(o.pct)}%`}</b><span class="tool">${name(o.tool)}</span><span class="xp">${t("slot.ended")}</span></li>`;
-    }
-  }
-  // 次に開ける枠: どれかのツールがリセット済みなら今すぐ、全部リミット中なら一番早いリセットから
+  const n = s.todayCount;
+  // 目標までのマス + 次の1マスだけ見せる (届かない上限は見せない)
+  const slots = Math.min(12, Math.max(s.goal, n) + 1);
   const at = nextOpenAt(s, now);
   const nextLabel = at ? t("slot.at", localTime(at, s.tz)) : t("slot.now");
-  const base = s.todayCount + s.todayOpened.filter((o) => o.status === "active").length;
-  for (let k = 1; k <= 10; k++) {
-    const n = base + k;
-    out += k === 1
-      ? `<li class="slot next${goalMark()}" style="--i:${n}"><b>${n}</b><span class="tool">${nextLabel}</span><span class="xp">+${comboXp(n)}</span></li>`
-      : `<li class="slot${goalMark()}" style="--i:${n}"><b>${n}</b><span class="xp">+${comboXp(n)}</span></li>`;
-    if (potential >= s.goal) break;
+  let out = "";
+  for (let i = 1; i <= slots; i++) {
+    const w = s.todayWindows[i - 1];
+    const goalMark = i === s.goal ? ` goal" data-goal-label="${t("slot.goal")}` : "";
+    if (w) {
+      out += `<li class="slot done${goalMark}" style="--i:${i}" data-n="${i}">
+        <b>${i}</b><span class="tool">${w.tool === "claude" ? "Claude" : "Codex"}</span><span class="xp">+${w.xp}</span></li>`;
+    } else if (i === n + 1) {
+      out += `<li class="slot next${goalMark}" style="--i:${i}"><b>${i}</b><span class="tool">${nextLabel}</span><span class="xp">+${comboXp(i)}</span></li>`;
+    } else {
+      out += `<li class="slot${goalMark}" style="--i:${i}"><b>${i}</b><span class="xp">+${comboXp(i)}</span></li>`;
+    }
   }
   return `<ol class="track" aria-label="${t("today.track")}">${out}</ol>`;
+}
+
+// 「リセット後すぐ再開」タスク: 今日のリセットごとに、再開までの時間
+function quickTask(ctx, s, now) {
+  const { t } = ctx;
+  const rows = s.todayResets.map((r) => {
+    const cls = !r.passed ? "future" : r.rest ? "rest" : r.quick ? "ok" : r.waiting ? "wait" : "late";
+    const what = !r.passed ? t("reset.future")
+      : r.rest ? t("reset.rest")
+      : r.ticket ? t("reset.ticket")
+      : r.waiting ? t("reset.waiting", Math.round((now - r.resetAt) / 60000))
+      : t("reset.after", r.delayMin);
+    return `<li class="${cls}"><time>${localTime(r.resetAt, s.tz)}</time><span class="tool">${TOOL_NAME[r.tool]}</span><span class="what">${what}${cls === "ok" ? " ✓" : ""}</span></li>`;
+  }).join("");
+  return rows ? `<ul class="resets">${rows}</ul>` : `<p class="muted small">${t("reset.none")}</p>`;
 }
 
 function heatmap(ctx, s, days = 28) {
@@ -379,15 +385,26 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
 
 <section class="card today" data-celebrate data-day="${s.today}" data-count="${s.todayCount}" data-tier="${esc(tier)}" data-last-xp="${s.todayWindows.at(-1)?.xp ?? 0}" data-record="${record ? 1 : ""}" data-goal-hit="${s.todayCount === s.goal ? 1 : ""}">
   <div class="today-head">
-    <h1 class="h2">${t("today.h")} <span class="num">${s.todayCount}</span><span class="unit">${t("unit")}</span>${tier ? `<span class="tier">${esc(tier)}</span>` : ""}</h1>
-    ${s.todayOpenedCount > s.todayCount ? `<p class="opened">${t("today.opened", s.todayOpenedCount)}</p>` : ""}
+    <h1 class="h2">${t("tasks.h")}</h1>
     <p class="today-xp"><b>+${s.todayXp}</b> XP</p>
   </div>
-  ${todayTrack(ctx, s, now)}
-  <p class="today-note">${s.todayDone
-    ? t("today.done", s.goal, s.todayCount + 1, esc(tierName(lang, s.nextTier)), s.nextXp)
-    : t("today.left", left) + nextWindowText(ctx, s, now)}${record ? ` · <span class="record">${t("today.record")}</span>` : s.bestDay > 0 ? ` · ${t("today.best", s.bestDay)}` : ""}</p>
-  <p class="late">${t("today.late", s.todayLateMin)}${s.quickRun > 0 ? ` · ${t("today.quick", s.quickRun)}` : ""}</p>
+
+  <div class="quest">
+    <div class="quest-head"><span class="q-icon" aria-hidden="true">🎯</span><b>${t("quest.max")}</b>${tier ? `<span class="tier">${esc(tier)}</span>` : ""}<span class="q-prog">${s.todayCount} / ${s.goal}</span></div>
+    <div class="q-bar"><i style="width:${Math.min(100, (s.todayCount / s.goal) * 100)}%"></i></div>
+    ${todayTrack(ctx, s, now)}
+    <p class="today-note">${s.todayDone
+      ? t("today.done", s.goal, s.todayCount + 1, esc(tierName(lang, s.nextTier)), s.nextXp)
+      : t("today.left", left) + nextWindowText(ctx, s, now)}${record ? ` · <span class="record">${t("today.record")}</span>` : s.bestDay > 0 ? ` · ${t("today.best", s.bestDay)}` : ""}</p>
+  </div>
+
+  <div class="quest">
+    <div class="quest-head"><span class="q-icon" aria-hidden="true">⚡</span><b>${t("quest.quick")}</b><span class="q-prog">${s.todayResetsPassed ? `${s.todayQuick} / ${s.todayResetsPassed}` : "—"}</span></div>
+    <div class="q-bar quick"><i style="width:${s.todayResetsPassed ? (s.todayQuick / s.todayResetsPassed) * 100 : 0}%"></i></div>
+    ${quickTask(ctx, s, now)}
+    <p class="late">${t("today.late", s.todayLateMin)}${s.quickRun > 0 ? ` · ${t("today.quick", s.quickRun)}` : ""}</p>
+    <p class="warmup">💡 ${t("warmup.tip")} <span class="soon">${t("warmup.soon")}</span></p>
+  </div>
 </section>
 <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
 
