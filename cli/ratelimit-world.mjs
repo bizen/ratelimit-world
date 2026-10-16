@@ -255,11 +255,13 @@ export function scanCodex(sinceMs) {
         const reset = lim && resetOf(lim, ts), wreset = wk && resetOf(wk, ts);
         // 使用率そのものは送らない (使っていないときは古い数字になるため)。到達の判定とプランだけに使う
         // 使用率は同じ枠の中では増えるだけなので、枠が続いている間は最後の値がそのまま今の値になる
-        if (!current || ts > current.at) {
+        // 「今の状態」は 5時間枠の値を含む記録だけで更新する。
+        // limit_id が "premium" など別の利用枠の記録 (5時間枠が空) で、使用中の枠を上書きしないため
+        if (lim && reset && (!current || ts > current.at)) {
           current = {
-            at: ts, plan: p.rate_limits?.plan_type ?? null, resetAt: reset || null,
-            pct: lim ? Number(lim.used_percent) : null,
-            week: wk && wreset ? { pct: Number(wk.used_percent), resetAt: wreset } : null,
+            at: ts, plan: p.rate_limits?.plan_type ?? current?.plan ?? null, resetAt: reset,
+            pct: Number(lim.used_percent),
+            week: wk && wreset ? { pct: Number(wk.used_percent), resetAt: wreset } : current?.week ?? null,
           };
         }
         if (lim && reset && Number(lim.used_percent) >= 100) hits.push({ ts, reset });
