@@ -43,7 +43,7 @@ ${head}
 </head>
 <body class="${bodyClass} lang-${lang}">
 <header class="top">
-  <a class="brand" href="/">ratelimit<span>.world</span></a>
+  <a class="brand" href="/"><span class="name">ratelimit<span>.world</span></span><sub class="by">by bizencore</sub></a>
   <nav>
     <a href="/leaderboard">${t("nav.board")}</a>
     ${user ? `<a class="me" href="/me">${user.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="">` : ""}@${esc(user.login)}</a>` : `<a class="btn small" href="/login">${t("nav.login")}</a>`}
@@ -147,6 +147,24 @@ export function landing(ctx, origin) {
 }
 
 // ---------- dashboard ----------
+// 直近7日のストリーク (Duolingo の丸の列): 達成🔥 / フリーズ🧊 / 週間リミット中🏆 / 未達 / 今日
+function weekStrip(ctx, s) {
+  const { t, lang } = ctx;
+  const fmt = new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", { weekday: "narrow", timeZone: "UTC" });
+  let out = "";
+  for (let i = 6; i >= 0; i--) {
+    const k = addDays(s.today, -i);
+    const count = s.days[k]?.count ?? 0;
+    const met = count >= s.goal;
+    const kind = met ? "met" : s.frozenDays.includes(k) ? "frozen" : s.lockedDays.includes(k) ? "locked" : i === 0 ? "pending" : "missed";
+    const icon = { met: "🔥", frozen: "🧊", locked: "🏆", pending: "", missed: "" }[kind];
+    const [y, m, d] = k.split("-").map(Number);
+    const label = `${k}: ${t(`week.${kind}`)} (${t("windows", count)})`;
+    out += `<li class="wd ${kind} ${i === 0 ? "today" : ""}" title="${esc(label)}" aria-label="${esc(label)}"><span class="dot">${icon}</span><small>${fmt.format(new Date(Date.UTC(y, m - 1, d)))}</small></li>`;
+  }
+  return `<ol class="week-strip" aria-label="${t("week.aria")}">${out}</ol>`;
+}
+
 // 「2時間前」「3日前」のような経過時間
 function ago(ctx, ms) {
   const m = Math.max(0, Math.round(ms / 60000));
@@ -238,32 +256,38 @@ function dialFoot(ctx, tool, s, now, limitedAt) {
 }
 
 // ツールごとの「次のリセット」ダイヤル
+// 「時間」と「使用率」の競争。外側の細い線が枠の経過時間、内側の太い線が使用率。
+// 使用率が時間より前にいれば (リード)、このペースでリセット前に使い切れる
+export function race(pct, start, now) {
+  const elapsed = Math.min(100, Math.max(0, ((now - start) / WINDOW_MS) * 100));
+  const lead = Math.round(pct - elapsed);
+  // このペースで使い続けた場合: 使い切る時刻、または リセット時点の使用率
+  const at = pct > 0 ? start + ((now - start) * 100) / pct : null;
+  const reset = start + WINDOW_MS;
+  return { elapsed, lead, maxAt: at && at <= reset ? at : null, pctAtReset: at && at > reset ? Math.round((pct * WINDOW_MS) / Math.max(1, now - start)) : null };
+}
+
 function dial(ctx, tool, s, now) {
   const { t, lang } = ctx;
   const x = s.tools[tool];
   const last = s.lastReset[tool];
   const lock = s.weeklyLocks.find((w) => w.tool === tool);
-  let state, resetAt = null, frac = 0, sub, usedPct = null;
+  let state, resetAt = null, sub, usedPct = null;
   if (lock) {
     state = "weekly";
     resetAt = lock.resetAt;
-    frac = 1;
     sub = t("dial.sub.weekly", fmtWhen(lang, lock.resetAt, s.tz));
   } else if (x?.state === "limited") {
     state = "limited";
     resetAt = x.resetAt;
     usedPct = 100;
-    frac = Math.min(1, Math.max(0, (x.resetAt - now) / WINDOW_MS));
     sub = t("dial.sub.limited", localTime(x.resetAt, s.tz));
   } else if (s.nextReset?.[tool]?.resetAt > now) {
-    // 使用中: 今の枠のリセットまでを数える (Claude Code は推定)
+    // 使用中 (中継オフの Claude Code はリセット時刻が推定で、使用率は不明)
     const r = s.nextReset[tool];
     state = "using";
     resetAt = r.resetAt;
-    // 使用率が分かれば (Codex) リングは使用率、分からなければ (Claude Code) 残り時間
-    // リングはリセットまでの残り時間、使用率は横の縦バーで別に見せる
     usedPct = r.pct ?? null;
-    frac = Math.min(1, Math.max(0, (r.resetAt - now) / WINDOW_MS));
     sub = t(r.exact ? "dial.sub.using" : "dial.sub.usingEst", localTime(r.resetAt, s.tz));
   } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
     state = "ready";
@@ -272,24 +296,38 @@ function dial(ctx, tool, s, now) {
     state = "idle";
     sub = t("dial.sub.idle");
   }
-  const R = 52, C = 2 * Math.PI * R;
+  const start = resetAt && state !== "weekly" ? resetAt - WINDOW_MS : null;
+  const R1 = 54, C1 = 2 * Math.PI * R1; // 外側: 時間
+  const R2 = 41, C2 = 2 * Math.PI * R2; // 内側: 使用率
+  const off = (c, f) => (c * (1 - Math.min(1, Math.max(0, f)))).toFixed(1);
+  let timeFrac = 0, lead = "";
+  if (start) {
+    const r = race(usedPct ?? 0, start, now);
+    timeFrac = r.elapsed / 100;
+    if (usedPct != null) {
+      lead = usedPct >= 100 ? t("c.maxed") : r.lead >= 0 ? t("c.lead", { n: r.lead }) : t("c.behind", { n: -r.lead });
+      if (state === "using") sub = r.maxAt ? t("c.paceMax", { t: localTime(r.maxAt, s.tz) }) : t("c.paceShort", { p: Math.min(100, r.pctAtReset) });
+    }
+  } else if (state === "weekly") timeFrac = 1;
+  const raceOn = start != null && usedPct != null;
   return `
-<article class="dial tool-${tool} ${state}" data-tool="${tool}" ${resetAt ? `data-reset="${resetAt}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
+<article class="dial tool-${tool} ${state} ${raceOn ? "race" : ""} ${raceOn && usedPct < 100 && lead && !lead.startsWith("+") ? "behind" : ""}" data-tool="${tool}" data-tz="${esc(s.tz)}"
+  ${resetAt ? `data-reset="${resetAt}"` : ""} ${start ? `data-start="${start}"` : ""} ${usedPct != null ? `data-pct="${usedPct}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
   <h3>${TOOL_ICON[tool]}${TOOL_NAME[tool]}</h3>
-  <div class="ring-row">
-    <div class="ring">
-      <svg viewBox="0 0 120 120" aria-hidden="true">
-        <circle class="track" cx="60" cy="60" r="${R}"/>
-        <circle class="fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - frac)).toFixed(1)}" data-c="${C.toFixed(1)}"/>
-      </svg>
-      <div class="ring-text"><small data-ready-label="${t("dial.ready")}">${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
-    </div>
-    <div class="usage ${usedPct == null ? "unknown" : ""}" role="img" aria-label="${usedPct == null ? t("dial.usageUnknown") : t("dial.usedPct", Math.round(usedPct))}">
-      <b>${usedPct == null ? "—" : `${Math.round(usedPct)}%`}</b>
-      <span class="bar"><i style="height:${usedPct ?? 0}%"></i></span>
-      <small>${t("dial.usage")}</small>
+  <div class="ring" ${raceOn ? `role="img" aria-label="${esc(t("dial.raceAria", Math.round(usedPct), Math.round(timeFrac * 100)))}"` : ""}>
+    <svg viewBox="0 0 120 120" aria-hidden="true">
+      <circle class="track time-track" cx="60" cy="60" r="${R1}"/>
+      <circle class="fill time" cx="60" cy="60" r="${R1}" stroke-dasharray="${C1.toFixed(1)}" stroke-dashoffset="${off(C1, timeFrac)}" data-c="${C1.toFixed(1)}"/>
+      ${raceOn ? `<circle class="track use-track" cx="60" cy="60" r="${R2}"/>
+      <circle class="fill use" cx="60" cy="60" r="${R2}" stroke-dasharray="${C2.toFixed(1)}" stroke-dashoffset="${off(C2, usedPct / 100)}"/>` : ""}
+    </svg>
+    <div class="ring-text">
+      <small>${raceOn ? t("dial.usedPct", Math.round(usedPct)) : t(`dial.${state}`)}</small>
+      <b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b>
+      ${raceOn ? `<em class="lead">${esc(lead)}</em>` : ""}
     </div>
   </div>
+  ${raceOn ? `<p class="race-legend"><i class="k-use"></i>${t("dial.usage")} <i class="k-time"></i>${t("dial.time")}</p>` : ""}
   <p class="dial-sub">${esc(sub)}</p>
   ${dialFoot(ctx, tool, s, now, state === "limited" ? resetAt : null)}
 </article>`;
@@ -314,6 +352,7 @@ export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify }) {
   <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>${t("stat.weekXp")}</span></div>
   ${s.trophies ? `<div class="stat trophy" title="${t("stat.trophies.tip")}"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
 </section>
+${weekStrip(ctx, s)}
 ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title")}</b> ${s.weeklyLocks.map((w) => t("lock.item", w.tool, fmtWhen(lang, w.resetAt, s.tz))).join(t("lock.sep"))}${t("lock.tail")}</p></section>` : ""}
 
 <section class="card today" data-celebrate data-day="${s.today}" data-count="${s.todayCount}" data-tier="${esc(tier)}" data-last-xp="${s.todayWindows.at(-1)?.xp ?? 0}" data-record="${record ? 1 : ""}" data-goal-hit="${s.todayCount === s.goal ? 1 : ""}">

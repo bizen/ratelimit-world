@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS windows (
   reset_at INTEGER NOT NULL,
   hit_at INTEGER NOT NULL,
   resumed_at INTEGER,                -- リセット後に最初に使い始めた時刻
+  ended_at INTEGER,                  -- リセットチケットなどで予定より早く終わった時刻 (あれば実際のリセットはこちら)
   tokens TEXT,                       -- その枠で使ったトークン {model: [入力, 書き込み5分, 書き込み1時間, 読み出し, 出力]}
   PRIMARY KEY (user_id, tool, reset_at)
 );

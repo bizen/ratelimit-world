@@ -122,9 +122,11 @@ async function upsertUser(env, { githubId, login, name, avatar, lang }) {
 }
 
 // ---------- data ----------
+// reset_at は実際のリセット (早く終わった枠は ended_at)。orig_reset_at は PC が送ってきた予定のリセット (同じ枠かの照合に使う)
 async function userWindows(env, userId, days = STATS_DAYS) {
-  const { results } = await env.DB.prepare("SELECT tool, hit_at, reset_at, resumed_at FROM windows WHERE user_id = ? AND hit_at > ? ORDER BY hit_at")
-    .bind(userId, Date.now() - days * DAY).all();
+  const { results } = await env.DB.prepare(
+    "SELECT tool, hit_at, COALESCE(ended_at, reset_at) AS reset_at, reset_at AS orig_reset_at, resumed_at, ended_at FROM windows WHERE user_id = ? AND hit_at > ? ORDER BY hit_at",
+  ).bind(userId, Date.now() - days * DAY).all();
   return results;
 }
 
@@ -201,7 +203,7 @@ async function handleSync(req, env) {
   const added = [];
   for (const w of incoming) {
     // Codex のリセット時刻は数秒ぶれることがあるので、15分以内なら同じ枠とみなす
-    const same = existing.find((e) => e.tool === w.tool && Math.abs(e.reset_at - w.resetAt) < 15 * MIN);
+    const same = existing.find((e) => e.tool === w.tool && Math.abs(e.orig_reset_at - w.resetAt) < 15 * MIN);
     const tokens = cleanTokens(w.tokens);
     if (same) {
       const hit = Math.min(same.hit_at, w.hitAt);
@@ -209,13 +211,13 @@ async function handleSync(req, env) {
       if (hit !== same.hit_at || resumed !== same.resumed_at || tokens) {
         // トークン数は新しい送信のほうがログを多く読めているので上書きする
         stmts.push(env.DB.prepare("UPDATE windows SET hit_at = ?, resumed_at = ?, tokens = COALESCE(?, tokens) WHERE user_id = ? AND tool = ? AND reset_at = ?")
-          .bind(hit, resumed, tokens, user.id, w.tool, same.reset_at));
+          .bind(hit, resumed, tokens, user.id, w.tool, same.orig_reset_at));
         same.hit_at = hit; same.resumed_at = resumed;
       }
     } else {
       stmts.push(env.DB.prepare("INSERT OR IGNORE INTO windows (user_id, tool, reset_at, hit_at, resumed_at, tokens) VALUES (?, ?, ?, ?, ?, ?)")
         .bind(user.id, w.tool, w.resetAt, w.hitAt, w.resumedAt ?? null, tokens));
-      const row = { tool: w.tool, reset_at: w.resetAt, hit_at: w.hitAt, resumed_at: w.resumedAt ?? null };
+      const row = { tool: w.tool, reset_at: w.resetAt, orig_reset_at: w.resetAt, hit_at: w.hitAt, resumed_at: w.resumedAt ?? null };
       existing.push(row);
       added.push(row);
     }
@@ -223,7 +225,7 @@ async function handleSync(req, env) {
   for (const [tool, t] of Object.entries(active)) {
     for (const e of existing) {
       if (e.tool === tool && e.resumed_at == null && e.reset_at <= t && t - e.reset_at <= CHASE_MS) {
-        stmts.push(env.DB.prepare("UPDATE windows SET resumed_at = ? WHERE user_id = ? AND tool = ? AND reset_at = ?").bind(t, user.id, tool, e.reset_at));
+        stmts.push(env.DB.prepare("UPDATE windows SET resumed_at = ? WHERE user_id = ? AND tool = ? AND reset_at = ?").bind(t, user.id, tool, e.orig_reset_at));
         e.resumed_at = t;
       }
     }
@@ -263,6 +265,17 @@ async function handleSync(req, env) {
     if (nextReset[tool] && !(nextReset[tool].resetAt > now)) { delete nextReset[tool].resetAt; delete nextReset[tool].pct; }
     if (nextReset[tool]?.week && !(nextReset[tool].week.resetAt > now)) delete nextReset[tool].week;
     if (nextReset[tool] && !Object.keys(nextReset[tool]).some((k) => k === "resetAt" || k === "week")) delete nextReset[tool];
+    // リセットチケットなどで枠が予定より早く終わった: 新しい枠が始まったのは前の枠の予定リセットより前
+    const cur = nextReset[tool];
+    if (cur?.exact && cur.resetAt > now) {
+      const newStart = cur.resetAt - WINDOW_MS;
+      for (const e of existing) {
+        if (e.tool !== tool || e.ended_at || !(e.hit_at < newStart && e.reset_at > newStart + MIN)) continue;
+        stmts.push(env.DB.prepare("UPDATE windows SET ended_at = ?, resumed_at = COALESCE(resumed_at, ?) WHERE user_id = ? AND tool = ? AND reset_at = ?")
+          .bind(newStart, newStart, user.id, tool, e.orig_reset_at));
+        e.ended_at = newStart; e.reset_at = newStart; e.resumed_at ??= newStart;
+      }
+    }
   }
   stmts.push(env.DB.prepare("UPDATE users SET tz = ?, claude_plan = ?, codex_plan = ?, next_reset = ?, last_sync_at = ? WHERE id = ?")
     .bind(tz, claudePlan, codexPlan, JSON.stringify(nextReset), now, user.id));
@@ -401,7 +414,7 @@ function lossSummary(ws, now = Date.now()) {
 
 // オンボーディングで「連携できた！」の瞬間に見せる要約
 async function meSummary(env, user) {
-  const { results: ws } = await env.DB.prepare("SELECT tool, hit_at, reset_at, resumed_at, tokens FROM windows WHERE user_id = ? AND hit_at > ?")
+  const { results: ws } = await env.DB.prepare("SELECT tool, hit_at, COALESCE(ended_at, reset_at) AS reset_at, resumed_at, tokens FROM windows WHERE user_id = ? AND hit_at > ?")
     .bind(user.id, Date.now() - 60 * DAY).all();
   const cli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
   const delays = ws.map(delayOf).filter((d) => d != null);
@@ -460,7 +473,7 @@ async function runCron(env, now = Date.now()) {
   // 1) リセット通知: 直近 3分以内にリセットされた枠
   const due = await env.DB.prepare(
     `SELECT w.*, u.tz, u.goal, u.notify, u.lang FROM windows w JOIN users u ON u.id = w.user_id
-     WHERE w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
+     WHERE w.ended_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
   ).bind(now - 3 * MIN, now).all();
   for (const w of due.results) {
     if (!parseNotify(w).reset) continue;
@@ -472,7 +485,7 @@ async function runCron(env, now = Date.now()) {
   // 2) 出遅れ通知: リセットから 10分たっても再開していない枠
   const late = await env.DB.prepare(
     `SELECT w.*, u.tz, u.goal, u.notify, u.lang FROM windows w JOIN users u ON u.id = w.user_id
-     WHERE w.resumed_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
+     WHERE w.ended_at IS NULL AND w.resumed_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
   ).bind(now - LATE_AFTER - 5 * MIN, now - LATE_AFTER).all();
   for (const w of late.results) {
     if (!parseNotify(w).late) continue;

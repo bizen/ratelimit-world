@@ -87,6 +87,12 @@ export const T = {
     "stat.trophies.tip": "週間リミットを使い切った回数",
     "stat.best": "最長",
     "stat.total": "使い切った枠",
+    "week.aria": "直近7日のストリーク",
+    "week.met": "目標達成",
+    "week.frozen": "フリーズで守った日",
+    "week.locked": "週間リミット中（守られた日）",
+    "week.pending": "今日（まだ未達）",
+    "week.missed": "未達",
     "lock.title": "週間リミットを使い切りました！",
     "lock.item": (tool, when) => `${TOOL[tool]} は ${when} にリセット`,
     "lock.sep": "、",
@@ -107,6 +113,8 @@ export const T = {
     "dial.usedPct": (p) => `${p}% 使用`,
     "dial.usage": "使用率",
     "dial.usageUnknown": "使用率は不明",
+    "dial.time": "時間",
+    "dial.raceAria": (u, e) => `使用率 ${u}%、時間の経過 ${e}%`,
     "dial.week": "週間枠",
     "dial.weekReset": (when) => `${when} リセット`,
     "dial.started": "枠の開始",
@@ -234,6 +242,11 @@ export const T = {
     // ブラウザ側 (app.js) で使う文言。{n} などを置き換える
     "c.ready": "今すぐ再開！",
     "c.copied": "コピーしました",
+    "c.lead": "+{n}% リード",
+    "c.behind": "{n}% 遅れ",
+    "c.maxed": "使い切り！",
+    "c.paceMax": "このペースなら {t} に使い切れる",
+    "c.paceShort": "このペースだと {p}% でリセット",
     "c.saved": "保存しました",
     "c.saveFailed": "保存できませんでした。もう一度お試しください",
     "c.lateNow": "{n}分 出遅れ中",
@@ -330,6 +343,12 @@ export const T = {
     "stat.trophies.tip": "Times you used up a weekly limit",
     "stat.best": "longest",
     "stat.total": "windows used",
+    "week.aria": "Streak over the last 7 days",
+    "week.met": "goal met",
+    "week.frozen": "saved by a freeze",
+    "week.locked": "weekly limit (protected)",
+    "week.pending": "today (not yet)",
+    "week.missed": "missed",
     "lock.title": "You used up a weekly limit!",
     "lock.item": (tool, when) => `${TOOL[tool]} resets ${when}`,
     "lock.sep": ", ",
@@ -350,6 +369,8 @@ export const T = {
     "dial.usedPct": (p) => `${p}% used`,
     "dial.usage": "used",
     "dial.usageUnknown": "usage unknown",
+    "dial.time": "time",
+    "dial.raceAria": (u, e) => `${u}% used, ${e}% of the window elapsed`,
     "dial.week": "Weekly",
     "dial.weekReset": (when) => `resets ${when}`,
     "dial.started": "Started",
@@ -472,6 +493,11 @@ export const T = {
 
     "c.ready": "Restart now!",
     "c.copied": "Copied",
+    "c.lead": "+{n}% ahead",
+    "c.behind": "{n}% behind",
+    "c.maxed": "Maxed out!",
+    "c.paceMax": "On pace to max out at {t}",
+    "c.paceShort": "On pace for {p}% by reset",
     "c.saved": "Saved",
     "c.saveFailed": "Couldn't save. Please try again",
     "c.lateNow": "{n} min late",
@@ -507,7 +533,10 @@ export function tr(lang) {
   const dict = T[lang] ?? T.ja;
   return (key, ...args) => {
     const v = dict[key] ?? T.ja[key] ?? key;
-    return typeof v === "function" ? v(...args) : v;
+    if (typeof v === "function") return v(...args);
+    // ブラウザ用の文言 ("+{n}% リード" など) はサーバーでも同じ形で埋める
+    const vars = args[0];
+    return vars && typeof vars === "object" ? v.replace(/\{(\w+)\}/g, (_, x) => vars[x] ?? "") : v;
   };
 }
 

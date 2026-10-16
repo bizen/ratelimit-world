@@ -17,7 +17,8 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       const clock = $(".clock", d);
       if (left <= 0) {
         // リセットの瞬間: GO に切り替える
-        d.classList.remove("limited", "weekly", "using");
+        d.classList.remove("limited", "weekly", "using", "race", "behind");
+        delete d.dataset.start;
         d.classList.add("ready");
         delete d.dataset.reset;
         $(".ring-text small", d).textContent = T("c.ready");
@@ -27,9 +28,24 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       const h = Math.floor(left / 3600000), m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;
       // 週間リミットのように 1日以上先なら「3日 13時間」で見せる
       clock.textContent = h >= 24 ? T("c.days", { d: Math.floor(h / 24), h: h % 24 }) : `${h}:${pad(m)}:${pad(s)}`;
-      if (d.classList.contains("limited") || d.classList.contains("using")) {
-        const fill = $(".fill", d);
-        fill.style.strokeDashoffset = (+fill.dataset.c * (1 - Math.min(1, left / WINDOW_MS))).toFixed(1);
+      // 外側の線 = 枠の経過時間。使用率が分かれば、時間との差 (リード/遅れ) とペースの予測も更新する
+      if (d.dataset.start) {
+        const start = +d.dataset.start;
+        const elapsed = Math.min(1, Math.max(0, (now - start) / WINDOW_MS));
+        const time = $(".fill.time", d);
+        time.style.strokeDashoffset = (+time.dataset.c * (1 - elapsed)).toFixed(1);
+        if (d.dataset.pct) {
+          const pct = +d.dataset.pct;
+          const lead = Math.round(pct - elapsed * 100);
+          const el = $(".lead", d);
+          if (el) el.textContent = pct >= 100 ? T("c.maxed") : lead >= 0 ? T("c.lead", { n: lead }) : T("c.behind", { n: -lead });
+          d.classList.toggle("behind", pct < 100 && lead < 0);
+          if (d.classList.contains("using") && pct > 0) {
+            const at = start + ((now - start) * 100) / pct;
+            const hm = (ms) => new Intl.DateTimeFormat("en-GB", { timeZone: d.dataset.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
+            $(".dial-sub", d).textContent = at <= reset ? T("c.paceMax", { t: hm(at) }) : T("c.paceShort", { p: Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
+          }
+        }
       }
     }
     for (const d of $$(".dial.ready[data-since]")) {
