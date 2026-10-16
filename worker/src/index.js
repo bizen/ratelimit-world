@@ -5,6 +5,7 @@ import { pickLang, tr, LANGS } from "./i18n.js";
 import { notice } from "./notice.js";
 import { costOf, lostWindowsOf, PRICING_AS_OF } from "./pricing.js";
 import * as pages from "./pages.js";
+import { svgToPng, avatarData } from "./og.js";
 import { leagueWeek, prevWeek, leagueXp, settle, nextTier, byStanding, zones, LEAGUE_SIZE } from "./league.js";
 
 const SESSION_COOKIE = "rw_session";
@@ -799,7 +800,7 @@ async function route(req, env) {
   }
   if (p === "/leaderboard") return html(pages.leaderboard(ctx, await leaderboards(env), url.searchParams.get("board")));
 
-  const prof = p.match(/^\/@([\w-]{1,39})(\/card\.svg)?$/);
+  const prof = p.match(/^\/@([\w-]{1,39})(\/card\.(?:svg|png))?$/);
   if (prof) {
     const u = await env.DB.prepare("SELECT * FROM users WHERE login = ?").bind(prof[1]).first();
     const visible = u && (u.public || user?.id === u.id);
@@ -807,7 +808,10 @@ async function route(req, env) {
       if (!visible) return new Response("not found", { status: 404 });
       // シェアカードは ?lang= で言語を選べる (SNS のクローラーは cookie を持たないため)
       const cl = LANGS.includes(url.searchParams.get("lang")) ? url.searchParams.get("lang") : u.lang || ctx.lang;
-      return new Response(pages.card({ ...ctx, lang: cl, t: tr(cl) }, u, await statsFor(env, u)), { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=300" } });
+      const lg = await env.DB.prepare("SELECT tier FROM league_members WHERE user_id = ? ORDER BY week DESC LIMIT 1").bind(u.id).first();
+      const svg = pages.card({ ...ctx, lang: cl, t: tr(cl) }, u, await statsFor(env, u), { avatar: await avatarData(u.avatar_url), league: u.public ? lg : null });
+      if (prof[2].endsWith(".svg")) return new Response(svg, { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=300" } });
+      return new Response(await svgToPng(svg), { headers: { "content-type": "image/png", "cache-control": "public, max-age=300" } });
     }
     if (!visible) return html(pages.message(ctx, ctx.t("err.profile.title"), ctx.t("err.profile.text")), 404);
     const [followers, following] = await Promise.all([

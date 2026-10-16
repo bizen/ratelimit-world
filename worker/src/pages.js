@@ -783,7 +783,7 @@ export function profile(ctx, u, s, origin, social = {}) {
   const tier = tierName(lang, s.tier);
   return layout(ctx, {
     title: `@${u.login} · ratelimit.world`,
-    head: `<meta property="og:title" content="${esc(t("prof.ogTitle", u.login, s.streak))}"><meta property="og:description" content="${esc(t("prof.ogDesc", s.todayCount, s.goal, s.weekXp))}"><meta property="og:image" content="${esc(url)}/card.svg?lang=${lang}"><meta name="twitter:card" content="summary_large_image">`,
+    head: `<meta property="og:title" content="${esc(t("prof.ogTitle", u.login, s.streak))}"><meta property="og:description" content="${esc(t("prof.ogDesc", s.todayCount, s.goal, s.weekXp))}"><meta property="og:image" content="${esc(url)}/card.png?lang=${lang}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image">`,
     body: `
 <section class="profile-head">
   ${u.avatar_url ? `<img class="avatar" src="${esc(u.avatar_url)}" alt="">` : ""}
@@ -808,7 +808,7 @@ ${self && !u.public ? `<p class="private-note" role="status">🔒 ${t("p.private
 </section>
 ${social.ps ? profileRecords(ctx, s, social.ps, social.loss) : ""}
 ${u.public ? `<section class="card share-card">
-  <img src="/@${esc(u.login)}/card.svg?lang=${lang}" alt="${esc(t("prof.cardAlt", u.login))}" width="600" height="315">
+  <img src="/@${esc(u.login)}/card.png?lang=${lang}" alt="${esc(t("prof.cardAlt", u.login))}" width="600" height="315">
   <div class="row">
     <a class="btn" target="_blank" rel="noopener" href="https://x.com/intent/post?text=${encodeURIComponent(t("prof.shareText", s.streak))}&url=${encodeURIComponent(url)}">${t("prof.shareX")}</a>
     <button class="btn ghost" data-copy-text="${esc(url)}">${t("prof.copyLink")}</button>
@@ -860,23 +860,62 @@ export function cliVerify(ctx, code) {
 }
 
 // ---------- share card (SVG 1200x630) ----------
-export function card(ctx, u, s) {
-  const { t } = ctx;
+// シェアカード (1200×630、PNG にして配る)。主役は 🔥連続日数とリミ。
+// 絵文字は PNG にすると出ないので、炎やメダルも図形で描く
+const C = { bg: "#15123A", panel: "#201C4E", line: "#2E2A5C", violet: "#8F84FF", deep: "#5B4BFF", ember: "#FF7A1A", ice: "#7FD8F5", gold: "#E8B931", text: "#FFFFFF", muted: "#B9B3FF" };
+const DISPLAY = `font-family="Dela Gothic One"`, BODY = `font-family="Zen Maru Gothic" font-weight="700"`;
+
+// リミの SVG を、CSS なしで描ける形 (色を直接書く) にして、カードの好きな位置に置く
+function limiAt(mood, x, y, size) {
+  return limi(mood)
+    .replace(/<svg class="limi-svg" viewBox="0 0 64 64" aria-hidden="true">/, `<svg x="${x}" y="${y}" width="${size}" height="${size}" viewBox="0 0 64 64">`)
+    .replace('class="flame"', `fill="${C.ember}"`)
+    .replace('class="body"', `fill="${C.deep}"`)
+    .replaceAll('class="cheek"', `fill="#FF9EC4" opacity=".55"`)
+    .replace('class="face"', `fill="#fff" stroke="#fff"`);
+}
+
+export function card(ctx, u, s, { avatar = null, league = null } = {}) {
+  const { t, lang } = ctx;
+  const mood = s.streak > 0 && s.todayDone ? "cheer" : s.streak > 0 ? "happy" : "neutral";
+  // 直近14日: 達成 = 炎の色、未達 = 紫、フリーズ = 氷、週間リミット = 金
   const days = [];
   for (let i = 13; i >= 0; i--) {
     const k = addDays(s.today, -i);
     const c = s.days[k]?.count ?? 0;
-    const fill = s.frozenDays.includes(k) ? "#7FD8F5" : s.lockedDays.includes(k) ? "#E8B931" : c === 0 ? "#2E2A5C" : c < s.goal ? "#8F84FF" : "#FF7A1A";
-    days.push(`<rect x="${80 + (13 - i) * 74}" y="470" width="62" height="62" rx="14" fill="${fill}"/>`);
+    const fill = s.frozenDays.includes(k) ? C.ice : s.lockedDays.includes(k) ? C.gold : c === 0 ? C.line : c < s.goal ? C.violet : C.ember;
+    days.push(`<rect x="${72 + (13 - i) * 44}" y="556" width="34" height="34" rx="9" fill="${fill}"/>`);
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-<rect width="1200" height="630" fill="#17153A"/>
-<circle cx="1080" cy="120" r="260" fill="#5B4BFF" opacity=".35"/>
-<text x="80" y="110" fill="#B9B3FF" font-family="Helvetica, Arial, sans-serif" font-size="34" font-weight="700">ratelimit.world</text>
-<text x="80" y="170" fill="#FFFFFF" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="700">@${esc(u.login)}</text>
-<text x="72" y="380" fill="#FF7A1A" font-family="Helvetica, Arial, sans-serif" font-size="210" font-weight="900">${s.streak}</text>
-<text x="${90 + String(s.streak).length * 118}" y="380" fill="#FFFFFF" font-family="Hiragino Sans, Noto Sans JP, Helvetica, sans-serif" font-size="64" font-weight="800">${esc(t("card.streak"))}</text>
-<text x="80" y="440" fill="#B9B3FF" font-family="Hiragino Sans, Noto Sans JP, Helvetica, sans-serif" font-size="30">${esc(t("card.sub", s.weekXp.toLocaleString(), s.bestStreak))}</text>
+  const n = String(s.streak);
+  const numW = n.length * 150; // Dela Gothic One の数字 1文字ぶん (200px のとき) のおおよその幅
+  const stats = [
+    [t("card.weekXp"), s.weekXp.toLocaleString("en-US")],
+    [t("card.best"), t("card.days", s.bestStreak)],
+    league ? [t("card.league"), leagueName(lang, league.tier)] : [t("card.total"), String(s.total)],
+  ];
+  const statsSvg = stats.map(([label, value], i) => `
+  <text x="${72 + i * 230}" y="478" ${BODY} font-size="22" fill="${C.muted}">${esc(label)}</text>
+  <text x="${72 + i * 230}" y="524" ${DISPLAY} font-size="38" fill="${C.text}">${esc(value)}</text>`).join("");
+  const loginX = avatar ? 148 : 72;
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630">
+<defs>
+  <clipPath id="av"><circle cx="102" cy="150" r="30"/></clipPath>
+  <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="${C.deep}" stop-opacity=".55"/><stop offset="1" stop-color="${C.deep}" stop-opacity="0"/></radialGradient>
+</defs>
+<rect width="1200" height="630" fill="${C.bg}"/>
+<circle cx="975" cy="330" r="330" fill="url(#glow)"/>
+<text x="72" y="82" ${DISPLAY} font-size="30"><tspan fill="${C.text}">ratelimit</tspan><tspan fill="${C.violet}">.world</tspan></text>
+${avatar ? `<image x="72" y="120" width="60" height="60" clip-path="url(#av)" xlink:href="${avatar}" href="${avatar}"/>` : ""}
+<text x="${loginX}" y="163" ${BODY} font-size="36" fill="${C.text}">@${esc(u.login)}</text>
+<g transform="translate(66 236) scale(1.56)">
+  <path d="M50 0C62 22 88 38 88 66 88 88 71 100 50 100 29 100 12 88 12 66 12 48 24 36 32 28 34 42 40 48 46 50 42 32 44 16 50 0Z" fill="${C.ember}"/>
+  <path d="M50 54C58 63 66 71 66 81 66 91 59 97 50 97 41 97 34 91 34 81 34 71 42 63 50 54Z" fill="#FFC24B"/>
+</g>
+<text x="222" y="392" ${DISPLAY} font-size="200" fill="${C.ember}">${esc(n)}</text>
+<text x="${246 + numW}" y="392" ${BODY} font-size="54" fill="${C.text}">${esc(t("card.streak"))}</text>
+${statsSvg}
 ${days.join("")}
+<text x="1128" y="582" text-anchor="end" ${BODY} font-size="22" fill="${C.muted}">${esc(t("card.tagline"))}</text>
+${limiAt(mood, 800, 110, 330)}
 </svg>`;
 }

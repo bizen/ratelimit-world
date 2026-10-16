@@ -351,6 +351,12 @@ export const T = {
 
     // シェアカード (SVG)
     "card.streak": "日連続",
+    "card.weekXp": "今週の XP",
+    "card.best": "最長連続",
+    "card.days": (n) => `${n}日`,
+    "card.league": "リーグ",
+    "card.total": "使い切った枠",
+    "card.tagline": "AI のレートリミットを、毎日使い切る",
     "card.sub": (xp, best) => `5時間枠を使い切った日 · 今週 ${xp} XP · 最長 ${best} 日`,
 
     // 称号 (自分の目標が基準)
@@ -735,6 +741,12 @@ export const T = {
     "verify.note": "Once linked, the computer sends only the times you hit a limit and when it resets.",
 
     "card.streak": "day streak",
+    "card.weekXp": "XP this week",
+    "card.best": "Longest streak",
+    "card.days": (n) => `${n} day${n === 1 ? "" : "s"}`,
+    "card.league": "League",
+    "card.total": "Windows maxed",
+    "card.tagline": "Maxing out AI rate limits, every day",
     "card.sub": (xp, best) => `days with a maxed 5-hour window · ${xp} XP this week · best ${best} days`,
 
     "tier.left": (n) => `${n} to go`,
