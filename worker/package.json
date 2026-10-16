@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "copy-cli": "cp ../cli/ratelimit-world.mjs public/cli.mjs",
+    "copy-cli": "cp ../cli/ratelimit-world.mjs public/cli.mjs && node scripts/cli-meta.mjs",
     "dev": "npm run copy-cli && wrangler dev",
     "deploy": "npm run copy-cli && wrangler deploy",
     "db:local": "wrangler d1 execute ratelimit-world --local --file=schema.sql",

@@ -265,7 +265,7 @@ async function handleSync(req, env) {
   } else if (s.todayDone && prefs.goal && (await claim(env, user.id, `goal:${s.today}`))) {
     await pushToUser(env, user.id, notice(fresh, "goal", s, now));
   }
-  return json({ ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak });
+  return json({ ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak, lang: user.lang ?? null });
 }
 
 // ---------- CLI ログイン (デバイスフロー) ----------

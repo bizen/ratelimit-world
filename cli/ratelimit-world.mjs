@@ -14,9 +14,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn, execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -366,7 +367,8 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
   if (active) payload.active = { [active]: Date.now() };
   try {
     const r = await api(cfg, "POST", "/api/sync", payload);
-    saveConfig({ ...loadConfig(), lastSyncAt: Date.now() });
+    // サイトで選んでいる言語に表示を合わせる
+    saveConfig({ ...loadConfig(), lastSyncAt: Date.now(), ...(r.lang ? { lang: r.lang } : {}) });
     log(`sync ok (${reason}) windows=${payload.windows.length}`);
     if (!quiet) console.log(L(`送信しました: ${payload.windows.length} 件。今日 ${r.today ?? "?"} / ${r.goal ?? "?"} 枠、${r.streak ?? 0} 日連続`, `Sent ${payload.windows.length} windows. Today ${r.today ?? "?"}/${r.goal ?? "?"}, ${r.streak ?? 0}-day streak`));
     return true;
@@ -374,7 +376,32 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
     log(`sync failed (${reason}): ${e.message}`);
     if (!quiet) console.error(L(`送信に失敗しました: ${e.message}`, `Failed to send: ${e.message}`));
     return false;
+  } finally {
+    await maybeUpdate().catch((e) => log(`update failed: ${e.message}`));
   }
+}
+
+// ---------- 自動更新 ----------
+// サーバーが配っている版の SHA-256 (/cli.json) と自分を比べ、違えば新しい版に置き換える。
+// 6時間に 1回だけ確認する。ダウンロードしたものが /cli.json の値と一致したときだけ置き換える
+const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
+async function maybeUpdate() {
+  const cfg = loadConfig();
+  if (!cfg.server || process.env.RATELIMIT_WORLD_NO_UPDATE) return;
+  if (realpath(SELF) !== realpath(INSTALLED_SCRIPT)) return; // 開発中のファイルは書き換えない
+  if (cfg.lastUpdateCheck && Date.now() - cfg.lastUpdateCheck < 6 * HOUR) return;
+  saveConfig({ ...cfg, lastUpdateCheck: Date.now() });
+  const get = (p) => fetch(new URL(p, cfg.server), { signal: AbortSignal.timeout(10_000) });
+  const meta = await get("/cli.json").then((r) => (r.ok ? r.json() : null));
+  if (!meta?.sha256 || meta.sha256 === sha256(fs.readFileSync(SELF))) return;
+  const res = await get("/cli.mjs");
+  if (!res.ok) return;
+  const body = Buffer.from(await res.arrayBuffer());
+  if (sha256(body) !== meta.sha256) { log("update skipped: checksum mismatch"); return; }
+  const tmp = `${INSTALLED_SCRIPT}.new`;
+  fs.writeFileSync(tmp, body);
+  fs.renameSync(tmp, INSTALLED_SCRIPT); // 置き換えは一瞬で済ませる (途中の状態を残さない)
+  log(`updated ${VERSION} -> ${meta.version}`);
 }
 
 // ---------- hooks ----------

@@ -2,3 +2,4 @@ node_modules/
 .wrangler/
 .dev.vars
 public/cli.mjs
+public/cli.json
