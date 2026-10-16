@@ -542,3 +542,12 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .pace.short { background: #DC2626; box-shadow: 0 3px 0 #A31B1B; }
 .dial.tool-claude .pace { border: 2px solid rgb(255 255 255 / .55); }
 .pace b, .pace span { white-space: nowrap; }
+
+/* ストリークの帯: 続けて達成した日の丸を、ひとつながりの帯で囲む */
+.wd { position: relative; }
+.wd .dot { position: relative; z-index: 1; }
+.wd[class*="run-"]::before { content: ""; position: absolute; top: -4px; height: 42px; background: var(--ember-soft); border: 2px solid color-mix(in srgb, var(--ember) 45%, transparent); border-left: 0; border-right: 0; z-index: 0; }
+.wd.run-mid::before { left: -4px; right: -4px; }
+.wd.run-start::before { left: calc(50% - 21px); right: -4px; border-left: 2px solid color-mix(in srgb, var(--ember) 45%, transparent); border-radius: 21px 0 0 21px; }
+.wd.run-end::before { left: -4px; right: calc(50% - 21px); border-right: 2px solid color-mix(in srgb, var(--ember) 45%, transparent); border-radius: 0 21px 21px 0; }
+.wd.today.pending.run-end .dot { border-style: dashed; border-color: var(--ember); }

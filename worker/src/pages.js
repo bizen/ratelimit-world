@@ -151,17 +151,33 @@ export function landing(ctx, origin) {
 function weekStrip(ctx, s) {
   const { t, lang } = ctx;
   const fmt = new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", { weekday: "narrow", timeZone: "UTC" });
-  let out = "";
+  const days = [];
   for (let i = 6; i >= 0; i--) {
     const k = addDays(s.today, -i);
     const count = s.days[k]?.count ?? 0;
     const met = count >= s.goal;
     const kind = met ? "met" : s.frozenDays.includes(k) ? "frozen" : s.lockedDays.includes(k) ? "locked" : i === 0 ? "pending" : "missed";
+    days.push({ k, i, count, kind, keeps: kind === "met" || kind === "frozen" || kind === "locked" });
+  }
+  // ストリークの帯: 続けて達成している日 (フリーズ・週間リミットで守った日も含む) をひとつながりに囲む。
+  // 今日がまだでも昨日まで続いていれば、今日も帯の端に入れる (今日やれば伸びる)
+  const today = days[6];
+  if (!today.keeps && days[5].keeps) today.joins = true;
+  const inRun = (d) => d && (d.keeps || d.joins);
+  for (let j = 0; j < 7; j++) {
+    const d = days[j];
+    if (!inRun(d)) continue;
+    const prev = inRun(days[j - 1]), next = inRun(days[j + 1]);
+    if (!prev && !next) continue; // 1日だけは帯にしない
+    d.run = prev && next ? "run-mid" : prev ? "run-end" : "run-start";
+  }
+  let out = "";
+  for (const d of days) {
     // 丸の中はその日に使い切った枠の数。達成などは枠線の色で表す (光らせない)
-    const icon = count > 0 ? String(count) : "";
-    const [y, m, d] = k.split("-").map(Number);
-    const label = `${k}: ${t(`week.${kind}`)} (${t("windows", count)})`;
-    out += `<li class="wd ${kind} ${i === 0 ? "today" : ""}" title="${esc(label)}" aria-label="${esc(label)}"><span class="dot">${icon}</span><small>${fmt.format(new Date(Date.UTC(y, m - 1, d)))}</small></li>`;
+    const icon = d.count > 0 ? String(d.count) : "";
+    const [y, m, dd] = d.k.split("-").map(Number);
+    const label = `${d.k}: ${t(`week.${d.kind}`)} (${t("windows", d.count)})`;
+    out += `<li class="wd ${d.kind} ${d.i === 0 ? "today" : ""} ${d.run ?? ""}" title="${esc(label)}" aria-label="${esc(label)}"><span class="dot">${icon}</span><small>${fmt.format(new Date(Date.UTC(y, m - 1, dd)))}</small></li>`;
   }
   return `<ol class="week-strip" aria-label="${t("week.aria")}">${out}</ol>`;
 }
