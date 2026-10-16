@@ -43,15 +43,15 @@ ${head}
 </head>
 <body class="${bodyClass} lang-${lang}">
 <header class="top">
-  <a class="brand" href="/"><span class="name">ratelimit<span>.world</span></span><sub class="by">by bizencore</sub></a>
+  <a class="brand" href="${user ? "/me" : "/"}"><span class="name">ratelimit<span>.world</span></span><sub class="by">by bizencore</sub></a>
   <nav>
     <a href="/leaderboard">${t("nav.board")}</a>
-    ${user ? `<a class="me" href="/me">${user.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="">` : ""}@${esc(user.login)}</a>` : `<a class="btn small" href="/login">${t("nav.login")}</a>`}
+    ${user ? `<a class="me" href="/@${esc(user.login)}">${user.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="">` : ""}@${esc(user.login)}</a>` : `<a class="btn small" href="/login">${t("nav.login")}</a>`}
   </nav>
 </header>
 <main>${body}</main>
 <footer class="foot">
-  <span class="brand-sm">ratelimit.world</span>
+  <a class="brand-sm" href="/">ratelimit.world</a>
   <a class="lang" href="/lang/${other}?next=${encodeURIComponent(ctx.path || "/")}" hreflang="${other}" lang="${other}">🌐 ${t("lang.switch")}</a>
 </footer>
 <script src="/app.js" defer></script>

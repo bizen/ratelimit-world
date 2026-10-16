@@ -355,7 +355,8 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   border-top: 2px solid var(--line); font-size: 13px; color: var(--muted);
 }
-.brand-sm { font: 400 14px var(--display); }
+.brand-sm { font: 400 14px var(--display); color: inherit; text-decoration: none; }
+.brand-sm:hover { color: var(--violet); }
 .foot .lang { font-weight: 700; text-decoration: none; border: 2px solid var(--line); border-radius: 999px; padding: 4px 12px; }
 .top nav a { white-space: nowrap; }
 /* 日本語の見出しは文字数が多いので、スマホでは少し小さく */
