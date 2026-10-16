@@ -22,7 +22,8 @@
         continue;
       }
       const h = Math.floor(left / 3600000), m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;
-      clock.textContent = `${h}:${pad(m)}:${pad(s)}`;
+      // 週間リミットのように 1日以上先なら「3日 13時間」で見せる
+      clock.textContent = h >= 24 ? `${Math.floor(h / 24)}日 ${h % 24}時間` : `${h}:${pad(m)}:${pad(s)}`;
       if (d.classList.contains("limited")) {
         const fill = $(".fill", d);
         fill.style.strokeDashoffset = (+fill.dataset.c * (1 - Math.min(1, left / WINDOW_MS))).toFixed(1);

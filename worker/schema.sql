@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   public INTEGER NOT NULL DEFAULT 1,
   claude_plan TEXT,                                -- 'pro' | 'max_5x' | 'max_20x' ... (CLI が ~/.claude.json から読む)
   codex_plan TEXT,                                 -- 'plus' | 'pro' ... (Codex のログの plan_type)
-  codex_state TEXT,                                -- 直近の Codex 5時間枠 {at, usedPercent, resetAt}
+  usage TEXT,                                      -- 直近の使用率 {claude|codex: {at, five: {pct, resetAt}, week: {pct, resetAt}}}
   last_sync_at INTEGER,
   onboarded_at INTEGER,                            -- /welcome を終えた時刻
   created_at INTEGER NOT NULL
@@ -56,6 +56,15 @@ CREATE TABLE IF NOT EXISTS windows (
 );
 CREATE INDEX IF NOT EXISTS windows_reset ON windows (reset_at);
 CREATE INDEX IF NOT EXISTS windows_user_hit ON windows (user_id, hit_at);
+
+-- 週間リミットの到達 (ごほうびと、リセットまでのストリーク保護に使う)
+CREATE TABLE IF NOT EXISTS weekly_hits (
+  user_id INTEGER NOT NULL,
+  tool TEXT NOT NULL,
+  reset_at INTEGER NOT NULL,
+  hit_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, tool, reset_at)
+);
 
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint TEXT PRIMARY KEY,

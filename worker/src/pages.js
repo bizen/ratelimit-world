@@ -159,38 +159,47 @@ function heatmap(s, days = 28) {
     const d = s.days[k];
     const c = d?.count ?? 0;
     const frozen = s.frozenDays.includes(k);
-    const lvl = frozen ? "frozen" : c === 0 ? "l0" : c < s.goal ? "l1" : c === s.goal ? "l2" : "l3";
-    const label = `${k}: ${frozen ? "フリーズで守った日" : `${c}回`}`;
+    const locked = s.lockedDays.includes(k);
+    const lvl = frozen ? "frozen" : locked ? "locked" : c === 0 ? "l0" : c < s.goal ? "l1" : c === s.goal ? "l2" : "l3";
+    const label = `${k}: ${frozen ? "フリーズで守った日" : locked ? "週間リミット中（自動で守られた日）" : `${c}枠`}${d?.weekly ? " · 🏆週間制覇" : ""}`;
     cells += `<i class="cell ${lvl} ${i === 0 ? "today" : ""}" title="${label}" aria-label="${label}"></i>`;
   }
   return `<div class="heat" role="img" aria-label="直近${days}日の到達回数">${cells}</div>`;
 }
 
-// ツールごとの「次のリセット」ダイヤル
+// ツールごとの「次のリセット」ダイヤル。使用率 (5時間枠・週間枠) が届いていれば一緒に出す
 function dial(tool, s, now) {
   const t = s.tools[tool];
-  const codex = tool === "codex" ? s.codex : null;
+  const u = s.usage?.[tool];
   const last = s.lastReset[tool];
+  const lock = s.weeklyLocks.find((w) => w.tool === tool);
+  const fresh = u && u.at > (last?.reset_at ?? 0);
   let state, resetAt = null, frac = 0, sub;
-  if (t?.state === "limited") {
+  if (lock) {
+    state = "weekly";
+    resetAt = lock.resetAt;
+    frac = 1;
+    sub = `🏆 週間リミット到達 · ${fmtDay(lock.resetAt, s.tz)} まで`;
+  } else if (t?.state === "limited") {
     state = "limited";
     resetAt = t.resetAt;
     frac = Math.min(1, Math.max(0, (t.resetAt - now) / WINDOW_MS));
     sub = `${localTime(t.resetAt, s.tz)} にリセット`;
-  } else if (codex && codex.resetAt > now && codex.at > (last?.reset_at ?? 0)) {
+  } else if (fresh && u.five && u.five.resetAt > now) {
     state = "using";
-    resetAt = codex.resetAt;
-    frac = Math.min(1, codex.usedPercent / 100);
-    sub = `${Math.round(codex.usedPercent)}% 使用 · ${localTime(codex.resetAt, s.tz)} にリセット`;
+    resetAt = u.five.resetAt;
+    frac = Math.min(1, u.five.pct / 100);
+    sub = `${Math.round(u.five.pct)}% 使用 · ${localTime(u.five.resetAt, s.tz)} にリセット`;
   } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
     state = "ready";
     sub = `${localTime(last.reset_at, s.tz)} にリセット済み`;
   } else {
     state = "idle";
-    sub = "リミットに当たるとここに出ます";
+    sub = "使い始めると、ここに使用率が出ます";
   }
+  const week = u?.week && u.week.resetAt > now ? u.week : null;
   const R = 52, C = 2 * Math.PI * R;
-  const label = { limited: "リセットまで", using: "使用中", ready: "今すぐ再開！", idle: "待機中" }[state];
+  const label = { limited: "リセットまで", using: "5時間枠", ready: "今すぐ再開！", idle: "待機中", weekly: "週間リセットまで" }[state];
   return `
 <article class="dial ${state}" data-tool="${tool}" ${resetAt ? `data-reset="${resetAt}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
   <h3>${TOOL_NAME[tool]}</h3>
@@ -202,7 +211,12 @@ function dial(tool, s, now) {
     <div class="ring-text"><small>${label}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
   </div>
   <p class="dial-sub">${esc(sub)}</p>
+  ${week && !lock ? `<div class="week"><span>週間枠 ${Math.round(week.pct)}%</span><div class="week-bar"><i style="width:${Math.min(100, week.pct)}%"></i></div></div>` : ""}
 </article>`;
+}
+
+function fmtDay(ms, tz) {
+  return new Intl.DateTimeFormat("ja-JP", { timeZone: tz, month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
 }
 
 export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
@@ -220,7 +234,9 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
   <div class="stat flame"><b>${s.streak}</b><span>日連続</span></div>
   <div class="stat ice" title="7日続けるごとに1つ。最大2つ"><b>${s.freezes}</b><span>フリーズ</span></div>
   <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>今週の XP</span></div>
+  ${s.trophies ? `<div class="stat trophy" title="週間リミットを使い切った回数"><b>${s.trophies}</b><span>週間制覇</span></div>` : ""}
 </section>
+${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>週間リミットを使い切りました！</b> ${s.weeklyLocks.map((w) => `${TOOL_NAME[w.tool]} は ${fmtDay(w.resetAt, s.tz)} にリセット`).join("、")}。それまで🔥ストリークは自動で守られます。</p></section>` : ""}
 
 <section class="card today" data-celebrate data-day="${s.today}" data-count="${s.todayCount}" data-tier="${esc(s.tier ?? "")}" data-last-xp="${s.todayWindows.at(-1)?.xp ?? 0}" data-record="${s.todayIsRecord && s.todayCount > 1 ? 1 : ""}" data-goal-hit="${s.todayCount === s.goal ? 1 : ""}">
   <div class="today-head">
@@ -243,7 +259,7 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
 <section class="card">
   <h2 class="h3">直近4週間</h2>
   ${heatmap(s)}
-  <p class="legend"><i class="cell l0"></i>0 <i class="cell l1"></i>目標未満 <i class="cell l2"></i>達成 <i class="cell l3"></i>超え <i class="cell frozen"></i>フリーズ</p>
+  <p class="legend"><i class="cell l0"></i>0 <i class="cell l1"></i>目標未満 <i class="cell l2"></i>達成 <i class="cell l3"></i>超え <i class="cell frozen"></i>フリーズ <i class="cell locked"></i>週間リミット中</p>
 </section>
 
 <section class="card" id="notify">
@@ -271,7 +287,7 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
     <label>ピンチ通知の時刻 <input type="time" name="remindAt" value="${esc(user.remind_at)}"></label>
     <label>タイムゾーン <input name="tz" value="${esc(user.tz)}" list="tzs"><datalist id="tzs" data-tz-list></datalist></label>
     <fieldset><legend>通知</legend>
-      ${chk("hit", "枠を使い切ったとき（n枠目・+XP）")}
+      ${chk("hit", "枠や週間リミットを使い切ったとき（+XP）")}
       ${chk("reset", "リセットした瞬間")}
       ${chk("late", "リセットから10分たっても再開していないとき")}
       ${chk("pinch", "ピンチ（指定時刻に目標未達）")}
@@ -370,6 +386,7 @@ export function profile(viewer, u, s, origin) {
   <div class="stat"><b>${s.bestStreak}</b><span>最長</span></div>
   <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>今週の XP</span></div>
   <div class="stat"><b>${s.total}</b><span>使い切った枠</span></div>
+  ${s.trophies ? `<div class="stat trophy"><b>${s.trophies}</b><span>週間制覇</span></div>` : ""}
 </section>
 <section class="card">
   <h2 class="h3">今日 ${s.todayCount} 枠${s.tier ? ` <span class="tier">${esc(s.tier)}</span>` : ""}</h2>

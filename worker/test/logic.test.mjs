@@ -116,3 +116,19 @@ test("tiers are relative to the user's own goal", async () => {
   assert.equal(tierOf(3, 1), "限界突破");
   assert.equal(tierOf(5, 3), "限界突破");
 });
+
+test("weekly limit hit gives a big reward and protects the streak until reset", async () => {
+  const { WEEKLY_XP } = await import("../src/logic.js");
+  // 13, 14 日は達成。14日に週間リミット到達 (リセットは 17日) → 15, 16 日は未達でも途切れない
+  const ws = daysOf(2, "2026-10-13");
+  const weekly = [{ tool: "claude", hit_at: jst("2026-10-14T20:00:00"), reset_at: jst("2026-10-17T09:00:00") }];
+  const s = computeStats(ws, { tz: TZ, goal: 2, now: jst("2026-10-17T10:00:00"), weekly });
+  assert.equal(s.streak, 2);
+  assert.deepEqual(s.lockedDays, ["2026-10-15", "2026-10-16"]);
+  assert.equal(s.freezes, 0);
+  assert.equal(s.trophies, 1);
+  assert.equal(s.xp, 100 + 120 + 100 + 120 + WEEKLY_XP);
+  assert.deepEqual(s.weeklyLocks, []);
+  const s2 = computeStats(ws, { tz: TZ, goal: 2, now: jst("2026-10-16T10:00:00"), weekly });
+  assert.equal(s2.weeklyLocks.length, 1);
+});

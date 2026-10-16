@@ -9,13 +9,15 @@ Claude Code と Codex の 5時間枠を、**リセットの瞬間から**使い�
 - **日をまたぐ**: 目標の枠数を使い切った日が続くと 🔥ストリーク。7日ごとにフリーズ 🧊（最大2つ）がもらえて、未達の日を自動で守る。
 - **1日の中**: その日の何枠目かで XP が増えるコンボ（100 → 120 → 150 → 200 → 300）。称号は自分の目標が基準（あとn枠 / 目標達成 / 目標超え / 限界突破）で、届かない上限は見せない。リセットから5分以内の再開は +50 XP。「今日のトラック」は目標＋1マスだけを並べ、次のマスの XP と時刻を見せる。枠を使い切った瞬間にスマホへ「今日n枠目 +XP」を通知し、ダッシュボードを開くと増えた枠がポップして紙吹雪が出る。
 - **ランキング**: ツール×課金プランごと（Claude Pro / Max 5x / Max 20x / ChatGPT Plus / Pro …）。プランは CLI が `~/.claude.json` の `oauthAccount.organizationType` / `organizationRateLimitTier` と、Codex のログの `rate_limits.plan_type` から読む。両方使う人は両方のボードに、そのツールの枠だけで出る。
+- **週間リミット**: Claude Code（`quotaLimits.rateLimitType: seven_day*` / ステータスラインの `seven_day`）や Codex（10080分枠）の週間リミットを使い切ると 🏆 +1000 XP と「週間制覇」。リセットまでの日は5時間枠を使えないので、ストリークを自動で守る（フリーズは使わない）。
+- **使用率**: Codex はログの `rate_limits`、Claude Code はステータスラインに渡される `rate_limits.five_hour / seven_day` から、5時間枠と週間枠の % を読んでダッシュボードに出す。Claude Code のステータスラインは CLI が間に入って使用率を記録し、元のステータスラインをそのまま呼ぶ。
 - **オンボーディング** (`/welcome`): コマンドを貼る → 連携した瞬間に過去60日の記録（使い切った枠・平均の出遅れ・取りこぼした時間）を見せる → 「ふだんの1日」を目安に目標を自分で選ぶ → 通知を ON。
 
 ## 構成
 
 ```
 [PC]  Claude Code / Codex
-        │ hooks (UserPromptSubmit / Stop / StopFailure=rate_limit) と Codex の notify
+        │ hooks (UserPromptSubmit / Stop / StopFailure=rate_limit)・statusLine と Codex の notify
         ▼
       cli/ratelimit-world.mjs ── ローカルログから「到達・リセット・再開の時刻」だけを送る
         │

@@ -1,5 +1,5 @@
 // ratelimit.world: Cloudflare Worker (API + ページ + 毎分の通知 Cron)
-import { computeStats, msg, validTz, localTime, dayKey, delayOf, MIN, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
+import { computeStats, msg, validTz, localTime, dayKey, delayOf, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
 import { sendPush, b64u } from "./webpush.js";
 import * as pages from "./pages.js";
 
@@ -116,11 +116,18 @@ async function userWindows(env, userId, days = STATS_DAYS) {
   return results;
 }
 
+async function userWeekly(env, userId, days = STATS_DAYS) {
+  const { results } = await env.DB.prepare("SELECT tool, hit_at, reset_at FROM weekly_hits WHERE user_id = ? AND hit_at > ? ORDER BY hit_at")
+    .bind(userId, Date.now() - days * DAY).all();
+  return results;
+}
+
+const parseUsage = (u) => { try { return JSON.parse(u.usage || "null") ?? {}; } catch { return {}; } };
+
 async function statsFor(env, user, now = Date.now()) {
-  const s = computeStats(await userWindows(env, user.id), { tz: user.tz, goal: user.goal, now });
-  let codex = null;
-  try { codex = user.codex_state ? JSON.parse(user.codex_state) : null; } catch {}
-  return { ...s, codex };
+  const [ws, weekly] = await Promise.all([userWindows(env, user.id), userWeekly(env, user.id)]);
+  const s = computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly });
+  return { ...s, usage: parseUsage(user) };
 }
 
 // 同じ通知を二度送らない。初めてなら true
@@ -199,22 +206,46 @@ async function handleSync(req, env) {
     }
   }
 
-  const codex = body.current?.codex;
-  const codexState = codex && isTime(codex.at) && isTime(codex.resetAt) && Number.isFinite(codex.usedPercent)
-    ? JSON.stringify({ at: codex.at, resetAt: codex.resetAt, usedPercent: codex.usedPercent }) : user.codex_state;
+  // 使用率 (5時間枠・週間枠の %)。届いたツールだけ上書きする
+  const usageObj = parseUsage(user);
+  const lim = (x) => (x && Number.isFinite(x.pct) && isTime(x.resetAt) ? { pct: Math.max(0, Math.min(100, x.pct)), resetAt: x.resetAt } : null);
+  for (const tool of TOOLS) {
+    const u = body.usage?.[tool];
+    if (u && isTime(u.at) && u.at <= now + MIN && (!usageObj[tool] || u.at >= usageObj[tool].at)) {
+      usageObj[tool] = { at: u.at, five: lim(u.five), week: lim(u.week) };
+    }
+  }
+  const usage = JSON.stringify(usageObj);
+
+  // 週間リミットの到達
+  const weeklyIn = (Array.isArray(body.weeklyHits) ? body.weeklyHits : []).slice(0, 100).filter((w) =>
+    TOOLS.has(w.tool) && isTime(w.hitAt) && isTime(w.resetAt) && w.hitAt <= now + 5 * MIN && w.resetAt > w.hitAt && w.resetAt - w.hitAt <= 7 * DAY + HOUR);
+  const weeklyOld = await userWeekly(env, user.id, 70);
+  const weeklyAdded = [];
+  for (const w of weeklyIn) {
+    if (weeklyOld.some((e) => e.tool === w.tool && Math.abs(e.reset_at - w.resetAt) < 6 * HOUR)) continue;
+    const row = { tool: w.tool, hit_at: w.hitAt, reset_at: w.resetAt };
+    weeklyOld.push(row);
+    weeklyAdded.push(row);
+    stmts.push(env.DB.prepare("INSERT OR IGNORE INTO weekly_hits (user_id, tool, reset_at, hit_at) VALUES (?, ?, ?, ?)").bind(user.id, w.tool, w.resetAt, w.hitAt));
+  }
   // タイムゾーンは設定画面で変えていなければ PC のものに合わせる
   const tz = user.tz === "UTC" && validTz(body.client?.tz) ? body.client.tz : user.tz;
   // 課金プラン (ランキングを分けるのに使う)。読めなかったときは前の値を残す
   const plan = (v, prev) => (typeof v === "string" && /^[a-z0-9_]{1,20}$/.test(v) ? v : prev);
   const claudePlan = plan(body.plans?.claude, user.claude_plan);
   const codexPlan = plan(body.plans?.codex, user.codex_plan);
-  stmts.push(env.DB.prepare("UPDATE users SET codex_state = ?, tz = ?, claude_plan = ?, codex_plan = ?, last_sync_at = ? WHERE id = ?")
-    .bind(codexState, tz, claudePlan, codexPlan, now, user.id));
+  stmts.push(env.DB.prepare("UPDATE users SET usage = ?, tz = ?, claude_plan = ?, codex_plan = ?, last_sync_at = ? WHERE id = ?")
+    .bind(usage, tz, claudePlan, codexPlan, now, user.id));
   await env.DB.batch(stmts);
 
-  const fresh = { ...user, tz, codex_state: codexState };
+  const fresh = { ...user, tz, usage };
   const s = await statsFor(env, fresh, now);
   const prefs = parseNotify(fresh);
+  // 週間リミットに当たったばかりなら、いちばん大きなごほうびを知らせる
+  for (const w of weeklyAdded.filter((x) => now - x.hit_at < 60 * MIN)) {
+    if ((await claim(env, user.id, `weekly:${w.tool}:${w.reset_at}`)) && prefs.hit) await pushToUser(env, user.id, msg.weekly(w.tool, s, w));
+  }
   // たった今リミットに当たった枠があれば「n枠目」を知らせる (過去分の取り込みでは鳴らさない)
   const justHit = added.filter((w) => now - w.hit_at < 30 * MIN).sort((a, b) => b.hit_at - a.hit_at)[0];
   if (justHit && (await claim(env, user.id, `hit:${justHit.tool}:${justHit.reset_at}`))) {
@@ -327,15 +358,17 @@ async function meSummary(env, user) {
 async function leaderboards(env, now = Date.now()) {
   const { results } = await env.DB.prepare(
     `SELECT u.id, u.login, u.name, u.avatar_url, u.tz, u.goal, u.claude_plan, u.codex_plan FROM users u
-     WHERE u.public = 1 AND EXISTS (SELECT 1 FROM windows w WHERE w.user_id = u.id AND w.hit_at > ?)`,
-  ).bind(now - 8 * DAY).all();
+     WHERE u.public = 1 AND (EXISTS (SELECT 1 FROM windows w WHERE w.user_id = u.id AND w.hit_at > ?)
+       OR EXISTS (SELECT 1 FROM weekly_hits h WHERE h.user_id = u.id AND h.hit_at > ?))`,
+  ).bind(now - 8 * DAY, now - 8 * DAY).all();
   const boards = {};
   for (const u of results) {
-    const all = await userWindows(env, u.id);
+    const [all, allWeekly] = await Promise.all([userWindows(env, u.id), userWeekly(env, u.id)]);
     for (const tool of ["claude", "codex"]) {
       const ws = all.filter((w) => w.tool === tool);
-      if (!ws.length) continue;
-      const s = computeStats(ws, { tz: u.tz, goal: u.goal, now });
+      const weekly = allWeekly.filter((w) => w.tool === tool);
+      if (!ws.length && !weekly.length) continue;
+      const s = computeStats(ws, { tz: u.tz, goal: u.goal, now, weekly });
       if (s.weekXp <= 0) continue;
       const key = `${tool}:${u[`${tool}_plan`] || "unknown"}`;
       (boards[key] ??= []).push({ ...u, weekXp: s.weekXp, weekWindows: Object.entries(s.days).filter(([k]) => k >= s.week).reduce((n, [, d]) => n + d.count, 0) });
@@ -349,29 +382,27 @@ async function leaderboards(env, now = Date.now()) {
 async function runCron(env, now = Date.now()) {
   // 1) リセット通知: 直近 3分以内にリセットされた枠
   const due = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify, u.codex_state FROM windows w JOIN users u ON u.id = w.user_id
+    `SELECT w.*, u.tz, u.goal, u.notify, u.usage FROM windows w JOIN users u ON u.id = w.user_id
      WHERE w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
   ).bind(now - 3 * MIN, now).all();
   for (const w of due.results) {
     if (!parseNotify(w).reset) continue;
     if (!(await claim(env, w.user_id, `reset:${w.tool}:${w.reset_at}`))) continue;
-    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal, codex_state: w.codex_state }, now);
+    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal, usage: w.usage }, now);
     await pushToUser(env, w.user_id, msg.reset(w.tool, s, now));
   }
 
   // 2) 出遅れ通知: リセットから 10分たっても再開していない枠
   const late = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify, u.codex_state FROM windows w JOIN users u ON u.id = w.user_id
+    `SELECT w.*, u.tz, u.goal, u.notify, u.usage FROM windows w JOIN users u ON u.id = w.user_id
      WHERE w.resumed_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
   ).bind(now - LATE_AFTER - 5 * MIN, now - LATE_AFTER).all();
   for (const w of late.results) {
     if (!parseNotify(w).late) continue;
-    if (w.tool === "codex") {
-      // Codex は毎ターン使用状況を送ってくるので、リセット後の記録があれば再開済み
-      try { if (JSON.parse(w.codex_state || "null")?.at > w.reset_at) continue; } catch {}
-    }
+    // 使用率はツールを使うたびに届くので、リセット後の記録があれば再開済み
+    if (parseUsage(w)[w.tool]?.at > w.reset_at) continue;
     if (!(await claim(env, w.user_id, `late:${w.tool}:${w.reset_at}`))) continue;
-    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal, codex_state: w.codex_state }, now);
+    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal, usage: w.usage }, now);
     await pushToUser(env, w.user_id, msg.late(w.tool, Math.round((now - w.reset_at) / MIN), s, now));
   }
 
@@ -387,7 +418,8 @@ async function runCron(env, now = Date.now()) {
     if (diff < 0 || diff >= 10 || !parseNotify(u).pinch) continue;
     const day = dayKey(now, u.tz);
     const s = await statsFor(env, u, now);
-    if (s.todayDone) continue;
+    // 達成済み、または週間リミット中 (今日は自動で守られる) なら催促しない
+    if (s.todayDone || s.weeklyLocks.length) continue;
     if (!(await claim(env, u.id, `pinch:${day}`))) continue;
     await pushToUser(env, u.id, msg.pinch(s));
   }

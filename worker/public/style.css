@@ -340,3 +340,18 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
   position: absolute; top: -10px; right: 10px; font: 700 11px var(--body); color: #fff;
   background: var(--ember); border-radius: 999px; padding: 2px 8px;
 }
+
+/* 週間リミット */
+.stat.trophy b { color: #C98A00; }
+.stat.trophy b::before { content: "🏆"; font-size: 20px; margin-right: 4px; vertical-align: 4px; }
+.card.lock { border-color: #E8B931; background: color-mix(in srgb, #FFC53D 14%, var(--surface)); }
+.card.lock p { margin: 0; }
+.dial.weekly .fill { stroke: #E8B931; }
+.dial.weekly { border-color: #E8B931; }
+.week { margin: 10px 4px 0; text-align: left; }
+.week span { font: 700 11px var(--mono); color: var(--muted); }
+.week-bar { position: relative; height: 8px; margin-top: 4px; border-radius: 999px; background: var(--violet-soft); overflow: hidden; }
+.week-bar i { position: absolute; inset: 0 auto 0 0; background: var(--violet); border-radius: 999px; }
+/* 4つ並ぶとき (週間制覇あり) はスマホで 2×2 にする */
+@media (max-width: 520px) { .stats-row:has(> :nth-child(4)) { grid-template-columns: 1fr 1fr; } }
+.cell.locked { background: color-mix(in srgb, #FFC53D 35%, var(--surface)); border-color: #E8B931; }

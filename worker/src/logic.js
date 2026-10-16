@@ -7,6 +7,7 @@ export const WINDOW_MS = 5 * HOUR;
 export const QUICK_MS = 5 * MIN;        // これ以内に再開したら「即スタート」
 export const CHASE_MS = 3 * HOUR;       // これより後の再開は出遅れではなく休憩とみなす
 export const MAX_FREEZES = 2;
+export const WEEKLY_XP = 1000;          // 週間リミットを使い切ったごほうび
 export const FREEZE_EVERY = 7;          // 7日連続ごとにフリーズを 1つもらえる
 
 export const TOOL_NAME = { claude: "Claude Code", codex: "Codex" };
@@ -93,8 +94,8 @@ export function xpOf(w, n = 1) {
   return comboXp(n) + quickBonus(w);
 }
 
-// windows: [{tool, hit_at, reset_at, resumed_at}]
-export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now() } = {}) {
+// windows: [{tool, hit_at, reset_at, resumed_at}] / weekly: [{tool, hit_at, reset_at}] (週間リミットの到達)
+export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), weekly = [] } = {}) {
   const ws = [...windows].sort((a, b) => a.hit_at - b.hit_at);
   const today = dayKey(now, tz);
   const thisWeek = weekKey(now, tz);
@@ -114,16 +115,29 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now() }
     xp += x;
     if (weekKey(w.hit_at, tz) === thisWeek) weekXp += x;
   }
+  // 週間リミット: 大きなごほうび。さらにリセットまでの日は 5時間枠を使えないので、ストリークを自動で守る
+  const locked = new Set();
+  for (const w of weekly) {
+    xp += WEEKLY_XP;
+    if (weekKey(w.hit_at, tz) === thisWeek) weekXp += WEEKLY_XP;
+    const k = dayKey(w.hit_at, tz);
+    (days[k] ??= { count: 0, claude: 0, codex: 0, xp: 0, lateMin: 0 }).weekly = (days[k].weekly ?? 0) + 1;
+    days[k].xp += WEEKLY_XP;
+    for (let d = k, end = dayKey(w.reset_at, tz); d <= end; d = addDays(d, 1)) locked.add(d);
+  }
   const met = (k) => (days[k]?.count ?? 0) >= goal;
 
   // ストリーク: 最初の記録日から昨日までをたどる。未達の日はフリーズがあれば自動で使う
   let run = 0, best = 0, freezes = 0, metRun = 0;
   const frozen = [];
+  const lockedDays = [];
   const first = ws.length ? dayKey(ws[0].hit_at, tz) : today;
   for (let k = first; k < today; k = addDays(k, 1)) {
     if (met(k)) {
       run++; metRun++;
       if (metRun % FREEZE_EVERY === 0) freezes = Math.min(MAX_FREEZES, freezes + 1);
+    } else if (locked.has(k)) {
+      lockedDays.push(k);           // 週間リミット中: 伸びないが途切れない (フリーズも使わない)
     } else if (run > 0 && freezes > 0) {
       freezes--; frozen.push(k);
     } else {
@@ -176,7 +190,9 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now() }
     todayDone,
     todayLateMin: days[today]?.lateMin ?? 0,
     possibleToday: possibleToday(now, tz),
-    streak, bestStreak: best, freezes, frozenDays: frozen,
+    streak, bestStreak: best, freezes, frozenDays: frozen, lockedDays,
+    weeklyLocks: weekly.filter((w) => w.reset_at > now).map((w) => ({ tool: w.tool, resetAt: w.reset_at })),
+    trophies: weekly.length,
     quickRun,
     xp, weekXp, week: thisWeek,
     total: ws.length,
@@ -227,6 +243,14 @@ export const msg = {
       title: `🧱 今日${n}枠目${n >= s.goal ? `「${tw?.tier ?? s.tier}」` : ""} +${tw?.xp ?? 100} XP`,
       body: `${TOOL_NAME[tool]} を使い切ったよ。${extra.join(" ")} 次のリセットは ${localTime(w.reset_at, s.tz)}。${n + 1}枠目は +${comboXp(n + 1)} XP`,
       tag: `hit-${tool}`,
+    };
+  },
+  weekly(tool, s, w) {
+    const d = new Intl.DateTimeFormat("ja-JP", { timeZone: s.tz, month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(w.reset_at));
+    return {
+      title: `🏆 ${TOOL_NAME[tool]} の週間リミットを使い切った！ +${WEEKLY_XP} XP`,
+      body: `1週間分を使い切った、まさに限界越え。${d} のリセットまで🔥ストリークは自動で守られるよ`,
+      tag: `weekly-${tool}`,
     };
   },
   goal(s) {
