@@ -136,11 +136,17 @@ async function userWeekly(env, userId, days = STATS_DAYS) {
   return results;
 }
 
+async function userSessions(env, userId, days = 3) {
+  const { results } = await env.DB.prepare("SELECT tool, reset_at, start_at, peak_pct, exact FROM opened_windows WHERE user_id = ? AND reset_at > ? ORDER BY start_at")
+    .bind(userId, Date.now() - days * DAY).all();
+  return results;
+}
+
 async function statsFor(env, user, now = Date.now()) {
-  const [ws, weekly] = await Promise.all([userWindows(env, user.id), userWeekly(env, user.id)]);
+  const [ws, weekly, sessions] = await Promise.all([userWindows(env, user.id), userWeekly(env, user.id), userSessions(env, user.id)]);
   let nextReset = {};
   try { nextReset = JSON.parse(user.next_reset || "{}"); } catch {}
-  return { ...computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly }), nextReset };
+  return { ...computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly, sessions }), nextReset };
 }
 
 // 同じ通知を二度送らない。初めてなら true
@@ -243,6 +249,29 @@ async function handleSync(req, env) {
     weeklyAdded.push(row);
     stmts.push(env.DB.prepare("INSERT OR IGNORE INTO weekly_hits (user_id, tool, reset_at, hit_at) VALUES (?, ?, ?, ?)").bind(user.id, w.tool, w.resetAt, w.hitAt));
   }
+  // 開けた枠。リセット時刻が 15分以内なら同じ枠とみなし、最大の使用率を更新する
+  const sessIn = (Array.isArray(body.sessions) ? body.sessions : []).slice(0, 500).filter((o) =>
+    TOOLS.has(o.tool) && isTime(o.startAt) && isTime(o.resetAt) && o.resetAt > o.startAt && o.resetAt - o.startAt <= WINDOW_MS + 15 * MIN && o.startAt <= now + MIN);
+  if (sessIn.length) {
+    const old = await userSessions(env, user.id, 70);
+    for (const o of sessIn) {
+      const peak = Number.isFinite(o.peakPct) ? Math.max(0, Math.min(100, o.peakPct)) : null;
+      const same = old.find((e) => e.tool === o.tool && Math.abs(e.reset_at - o.resetAt) < 15 * MIN);
+      if (same) {
+        const p = peak == null ? same.peak_pct : Math.max(same.peak_pct ?? 0, peak);
+        // 推定 → 正確な値が届いたら時刻も置き換える
+        const useNew = o.exact && !same.exact;
+        stmts.push(env.DB.prepare("UPDATE opened_windows SET peak_pct = ?, exact = ?, start_at = ? WHERE user_id = ? AND tool = ? AND reset_at = ?")
+          .bind(p, same.exact || o.exact ? 1 : 0, useNew ? o.startAt : same.start_at, user.id, o.tool, same.reset_at));
+        same.peak_pct = p;
+      } else {
+        stmts.push(env.DB.prepare("INSERT OR IGNORE INTO opened_windows (user_id, tool, reset_at, start_at, peak_pct, exact) VALUES (?, ?, ?, ?, ?, ?)")
+          .bind(user.id, o.tool, o.resetAt, o.startAt, peak, o.exact ? 1 : 0));
+        old.push({ tool: o.tool, reset_at: o.resetAt, start_at: o.startAt, peak_pct: peak, exact: o.exact ? 1 : 0 });
+      }
+    }
+  }
+
   // タイムゾーンは設定画面で変えていなければ PC のものに合わせる
   const tz = user.tz === "UTC" && validTz(body.client?.tz) ? body.client.tz : user.tz;
   // 課金プラン (ランキングを分けるのに使う)。読めなかったときは前の値を残す

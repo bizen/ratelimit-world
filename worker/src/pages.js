@@ -181,27 +181,36 @@ function nextWindowText(ctx, s, now) {
   return limited && limited > now ? ctx.t("today.nextAt", localTime(limited, s.tz)) : ctx.t("today.nextNow");
 }
 
-// 今日のトラック: 枠を 1つずつ積んでいく。先のマスにも XP を見せて、次を取りたくさせる
+// 今日のトラック: 1マス = 1枠。開けた枠を時刻順に並べ、状態で塗り分ける
+//   使い切った (塗りつぶし・XP) / 使用中 (使用率の分だけ下から塗る) / 使い切らずに終了 (枠線だけ・到達%)
+// そのあとに次に開ける枠と、目標までの空きマスを並べる (先のマスにも XP を見せる)
 function todayTrack(ctx, s, now) {
   const { t } = ctx;
-  const n = s.todayCount;
-  // 目標までのマス + 次の1マスだけ見せる (届かない上限は見せない)
-  const slots = Math.min(12, Math.max(s.goal, n) + 1);
-  const limited = nextLimited(s);
-  const ready = Object.values(s.lastReset).some((w) => w.resumed_at == null && now - w.reset_at < 3 * 3600 * 1000);
-  const nextLabel = !ready && limited ? t("slot.at", localTime(limited, s.tz)) : t("slot.now");
-  let out = "";
-  for (let i = 1; i <= slots; i++) {
-    const w = s.todayWindows[i - 1];
-    const goalMark = i === s.goal ? ` goal" data-goal-label="${t("slot.goal")}` : "";
-    if (w) {
-      out += `<li class="slot done${goalMark}" style="--i:${i}" data-n="${i}">
-        <b>${i}</b><span class="tool">${w.tool === "claude" ? "Claude" : "Codex"}</span><span class="xp">+${w.xp}</span></li>`;
-    } else if (i === n + 1) {
-      out += `<li class="slot next${goalMark}" style="--i:${i}"><b>${i}</b><span class="tool">${nextLabel}</span><span class="xp">+${comboXp(i)}</span></li>`;
+  const name = (tool) => (tool === "claude" ? "Claude" : "Codex");
+  let out = "", potential = 0;
+  // 目標の札は「使い切れば目標に届く」マスに付ける (終わった枠は数えない)
+  const goalMark = () => (++potential === s.goal ? ` goal" data-goal-label="${t("slot.goal")}` : "");
+  for (const o of s.todayOpened) {
+    if (o.status === "maxed") {
+      out += `<li class="slot done${goalMark()}" style="--i:${o.n ?? 1}" data-n="${o.n ?? ""}"><b>${o.n ?? ""}</b><span class="tool">${name(o.tool)}</span><span class="xp">${o.xp ? `+${o.xp}` : ""}</span></li>`;
+    } else if (o.status === "active") {
+      const p = o.pct == null ? null : Math.round(o.pct);
+      out += `<li class="slot active${goalMark()}" style="--p:${p ?? 0}%"><b>${p == null ? "…" : `${p}%`}</b><span class="tool">${name(o.tool)}</span><span class="xp">${t("slot.active")}</span></li>`;
     } else {
-      out += `<li class="slot${goalMark}" style="--i:${i}"><b>${i}</b><span class="xp">+${comboXp(i)}</span></li>`;
+      out += `<li class="slot ended"><b>${o.pct == null ? "—" : `${Math.round(o.pct)}%`}</b><span class="tool">${name(o.tool)}</span><span class="xp">${t("slot.ended")}</span></li>`;
     }
+  }
+  // 次に開ける枠: どれかのツールがリセット済みなら今すぐ、全部リミット中なら一番早いリセットから
+  const limited = nextLimited(s);
+  const anyFree = ["claude", "codex"].some((tool) => !s.tools[tool]);
+  const nextLabel = anyFree || !limited ? t("slot.now") : t("slot.at", localTime(limited, s.tz));
+  const base = s.todayCount + s.todayOpened.filter((o) => o.status === "active").length;
+  for (let k = 1; k <= 10; k++) {
+    const n = base + k;
+    out += k === 1
+      ? `<li class="slot next${goalMark()}" style="--i:${n}"><b>${n}</b><span class="tool">${nextLabel}</span><span class="xp">+${comboXp(n)}</span></li>`
+      : `<li class="slot${goalMark()}" style="--i:${n}"><b>${n}</b><span class="xp">+${comboXp(n)}</span></li>`;
+    if (potential >= s.goal) break;
   }
   return `<ol class="track" aria-label="${t("today.track")}">${out}</ol>`;
 }
@@ -362,6 +371,7 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
 <section class="card today" data-celebrate data-day="${s.today}" data-count="${s.todayCount}" data-tier="${esc(tier)}" data-last-xp="${s.todayWindows.at(-1)?.xp ?? 0}" data-record="${record ? 1 : ""}" data-goal-hit="${s.todayCount === s.goal ? 1 : ""}">
   <div class="today-head">
     <h1 class="h2">${t("today.h")} <span class="num">${s.todayCount}</span><span class="unit">${t("unit")}</span>${tier ? `<span class="tier">${esc(tier)}</span>` : ""}</h1>
+    ${s.todayOpenedCount > s.todayCount ? `<p class="opened">${t("today.opened", s.todayOpenedCount)}</p>` : ""}
     <p class="today-xp"><b>+${s.todayXp}</b> XP</p>
   </div>
   ${todayTrack(ctx, s, now)}

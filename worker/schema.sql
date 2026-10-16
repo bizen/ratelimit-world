@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS windows (
 CREATE INDEX IF NOT EXISTS windows_reset ON windows (reset_at);
 CREATE INDEX IF NOT EXISTS windows_user_hit ON windows (user_id, hit_at);
 
+-- 開けた枠 (使い切ったかどうかに関係なく)。今日のトラックで「使用中 / 使い切らずに終了」を見せるのに使う
+CREATE TABLE IF NOT EXISTS opened_windows (
+  user_id INTEGER NOT NULL,
+  tool TEXT NOT NULL,
+  reset_at INTEGER NOT NULL,
+  start_at INTEGER NOT NULL,
+  peak_pct REAL,                     -- その枠で到達した最大の使用率 (分からなければ NULL)
+  exact INTEGER NOT NULL DEFAULT 0,  -- 時刻が正確か (Claude Code の推定は 0)
+  PRIMARY KEY (user_id, tool, reset_at)
+);
+
 -- 週間リミットの到達 (ごほうびと、リセットまでのストリーク保護に使う)
 CREATE TABLE IF NOT EXISTS weekly_hits (
   user_id INTEGER NOT NULL,

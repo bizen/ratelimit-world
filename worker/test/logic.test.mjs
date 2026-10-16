@@ -178,3 +178,18 @@ test("yesterday's count and the last time a limit was hit", () => {
   assert.equal(s.lastHitByTool.codex, jst("2026-10-16T09:30:00"));
   assert.equal(s.lastHitByTool.claude, jst("2026-10-15T12:00:00"));
 });
+
+test("today's track lists every opened window with its state", () => {
+  const now = jst("2026-10-16T16:30:00");
+  const ws = [win("claude", "2026-10-16T09:00:00", "2026-10-16T12:00:00", null)];
+  const sessions = [
+    { tool: "claude", start_at: jst("2026-10-16T07:00:00"), reset_at: jst("2026-10-16T12:00:00"), peak_pct: 100, exact: 1 },
+    { tool: "codex", start_at: jst("2026-10-16T09:55:00"), reset_at: jst("2026-10-16T14:55:00"), peak_pct: 84, exact: 1 },
+    { tool: "codex", start_at: jst("2026-10-16T15:11:00"), reset_at: jst("2026-10-16T20:11:00"), peak_pct: 41, exact: 1 },
+    { tool: "codex", start_at: jst("2026-10-15T15:11:00"), reset_at: jst("2026-10-15T20:11:00"), peak_pct: 90, exact: 1 },
+  ];
+  const s = computeStats(ws, { tz: TZ, goal: 2, now, sessions });
+  assert.deepEqual(s.todayOpened.map((o) => [o.tool, o.status, o.pct]), [["claude", "maxed", 100], ["codex", "ended", 84], ["codex", "active", 41]]);
+  assert.equal(s.todayOpenedCount, 3);
+  assert.equal(s.todayOpened[0].xp, 100);
+});

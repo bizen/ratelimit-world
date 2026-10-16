@@ -96,7 +96,7 @@ export function xpOf(w, n = 1) {
 }
 
 // windows: [{tool, hit_at, reset_at, resumed_at}] / weekly: [{tool, hit_at, reset_at}] (週間リミットの到達)
-export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), weekly = [] } = {}) {
+export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), weekly = [], sessions = [] } = {}) {
   const ws = [...windows].sort((a, b) => a.hit_at - b.hit_at);
   const today = dayKey(now, tz);
   const thisWeek = weekKey(now, tz);
@@ -173,6 +173,29 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     if (w.reset_at <= now && (!lastReset[w.tool] || w.reset_at > lastReset[w.tool].reset_at)) lastReset[w.tool] = w;
   }
 
+  // 今日開けた枠 (1マス = 1枠)。使い切った枠 (windows) と照らし合わせて状態を決める:
+  //   maxed = 使い切った / active = 使用中 / ended = 使い切らずに終わった
+  const todayOpened = [];
+  const usedWin = new Set();
+  for (const o of sessions) {
+    if (dayKey(o.start_at, tz) !== today) continue;
+    const w = ws.find((x) => x.tool === o.tool && Math.abs((x.orig_reset_at ?? x.reset_at) - o.reset_at) < 15 * MIN);
+    if (w) usedWin.add(w);
+    const status = w ? "maxed" : o.reset_at > now ? "active" : "ended";
+    todayOpened.push({ tool: o.tool, startAt: o.start_at, resetAt: o.reset_at, pct: w ? 100 : o.peak_pct, exact: !!o.exact, status, hitAt: w?.hit_at ?? null });
+  }
+  // 開けた枠の記録がない使い切りの枠 (古いデータなど) も入れる
+  for (const w of ws) {
+    if (dayKey(w.hit_at, tz) === today && !usedWin.has(w)) todayOpened.push({ tool: w.tool, startAt: w.reset_at - WINDOW_MS, resetAt: w.reset_at, pct: 100, exact: true, status: "maxed", hitAt: w.hit_at });
+  }
+  todayOpened.sort((a, b) => a.startAt - b.startAt);
+  // 使い切った枠には XP を付ける (何枠目かは使い切った順)
+  for (const o of todayOpened) {
+    if (o.status !== "maxed") continue;
+    const tw = todayWindows.find((x) => x.tool === o.tool && x.hitAt === o.hitAt);
+    if (tw) { o.n = tw.n; o.xp = tw.xp; }
+  }
+
   // 今日を除いた 1日の最多枠数 (今日それを超えたら自己ベスト更新)
   let bestDay = 0;
   for (const [k, d] of Object.entries(days)) if (k !== today) bestDay = Math.max(bestDay, d.count);
@@ -186,6 +209,8 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     yesterdayByTool: { claude: days[addDays(today, -1)]?.claude ?? 0, codex: days[addDays(today, -1)]?.codex ?? 0 },
     lastHitByTool: Object.fromEntries(["claude", "codex"].map((tool) => [tool, ws.filter((w) => w.tool === tool).at(-1)?.hit_at ?? null])),
     todayWindows,
+    todayOpened,
+    todayOpenedCount: todayOpened.length,
     todayXp: days[today]?.xp ?? 0,
     tier: tierOf(todayCount, goal),
     nextTier: tierOf(todayCount + 1, goal),

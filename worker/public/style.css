@@ -456,3 +456,9 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .wd.missed .dot { border-style: dashed; color: var(--muted); }
 .wd.today .dot { outline: 2px solid var(--violet); outline-offset: 2px; }
 .wd.today small { color: var(--violet); }
+
+/* 今日のトラック: 使用中 (使用率の分だけ下から塗る) / 使い切らずに終了 (枠線だけ) */
+.slot.active { border: 2px solid var(--violet); color: var(--violet); background: linear-gradient(to top, color-mix(in srgb, var(--violet) 30%, var(--surface)) var(--p), var(--surface) var(--p)); }
+.slot.ended { border: 2px solid var(--line); background: var(--surface); color: var(--muted); }
+.slot.active b, .slot.ended b { font-size: 16px; }
+.today-head .opened { width: 100%; margin: -2px 0 0; font-size: 12px; color: var(--muted); font-weight: 700; }
