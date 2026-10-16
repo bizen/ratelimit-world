@@ -108,6 +108,13 @@ export function landing(ctx, origin) {
     <figcaption>${t("lp.caption")}</figcaption>
   </figure>
 
+  <aside class="loss" aria-label="${t("lp.loss.aria")}">
+    <p class="loss-lead">${t("lp.loss.lead")}</p>
+    <p class="loss-num">${t("lp.loss.num")}</p>
+    <p class="loss-sub">${t("lp.loss.sub")}</p>
+    <p class="loss-note">${t("lp.loss.note")}</p>
+  </aside>
+
   <div class="cta">
     ${user ? `<a class="btn big" href="/me">${t("lp.open")}</a>` : `<a class="btn big" href="/login">${t("lp.start")}</a>`}
     <a class="btn ghost" href="/leaderboard">${t("lp.board")}</a>
@@ -331,10 +338,11 @@ export function welcome(ctx, { origin, vapidKey }) {
       <p class="reveal-title">${t("wel.done")}</p>
       <div class="reveal-stats">
         <div><b data-h="total">0</b><span>${t("wel.total")}</span></div>
-        <div><b data-h="avgLateMin">—</b><span>${t("wel.avgLate")}</span></div>
-        <div><b data-h="bestDay">0</b><span>${t("wel.bestDay")}</span></div>
+        <div><b data-h="lostTime">—</b><span>${t("wel.lostTime")}</span></div>
+        <div><b data-h="windowValue">—</b><span>${t("wel.windowValue")}</span></div>
       </div>
       <p class="reveal-msg" data-h="message"></p>
+      <p class="reveal-note muted small" data-h="note" hidden></p>
       <button class="btn big" data-next="2">${t("wel.toGoal")}</button>
     </div>
     <p class="skip"><button class="link" data-next="2">${t("wel.later")}</button></p>

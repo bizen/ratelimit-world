@@ -3,6 +3,7 @@ import { computeStats, validTz, localTime, dayKey, delayOf, MIN, HOUR, DAY, WIND
 import { sendPush, b64u } from "./webpush.js";
 import { pickLang, tr, LANGS } from "./i18n.js";
 import { notice } from "./notice.js";
+import { costOf, lostWindowsOf, PRICING_AS_OF } from "./pricing.js";
 import * as pages from "./pages.js";
 
 const SESSION_COOKIE = "rw_session";
@@ -179,6 +180,16 @@ async function handleSync(req, env) {
     w.resetAt > w.hitAt && w.resetAt - w.hitAt <= WINDOW_MS + 15 * MIN &&
     (w.resumedAt == null || (isTime(w.resumedAt) && w.resumedAt >= w.resetAt && w.resumedAt <= now + 5 * MIN)));
 
+  // トークン数 (API 料金換算に使う)。形がおかしいものは捨てる
+  const cleanTokens = (t) => {
+    if (!t || typeof t !== "object") return null;
+    const out = {};
+    for (const [model, a] of Object.entries(t).slice(0, 10)) {
+      if (/^[\w.:<>-]{1,60}$/.test(model) && Array.isArray(a) && a.length === 5 && a.every((n) => Number.isFinite(n) && n >= 0 && n < 1e11)) out[model] = a.map(Math.round);
+    }
+    return Object.keys(out).length ? JSON.stringify(out) : null;
+  };
+
   // 「今使っている」合図 (hook の UserPromptSubmit) は、ログに残る前でも再開時刻として使う
   const active = {};
   for (const [tool, t] of Object.entries(body.active || {})) if (TOOLS.has(tool) && isTime(t) && t <= now + MIN) active[tool] = t;
@@ -189,17 +200,19 @@ async function handleSync(req, env) {
   for (const w of incoming) {
     // Codex のリセット時刻は数秒ぶれることがあるので、15分以内なら同じ枠とみなす
     const same = existing.find((e) => e.tool === w.tool && Math.abs(e.reset_at - w.resetAt) < 15 * MIN);
+    const tokens = cleanTokens(w.tokens);
     if (same) {
       const hit = Math.min(same.hit_at, w.hitAt);
       const resumed = same.resumed_at ?? w.resumedAt ?? null;
-      if (hit !== same.hit_at || resumed !== same.resumed_at) {
-        stmts.push(env.DB.prepare("UPDATE windows SET hit_at = ?, resumed_at = ? WHERE user_id = ? AND tool = ? AND reset_at = ?")
-          .bind(hit, resumed, user.id, w.tool, same.reset_at));
+      if (hit !== same.hit_at || resumed !== same.resumed_at || tokens) {
+        // トークン数は新しい送信のほうがログを多く読めているので上書きする
+        stmts.push(env.DB.prepare("UPDATE windows SET hit_at = ?, resumed_at = ?, tokens = COALESCE(?, tokens) WHERE user_id = ? AND tool = ? AND reset_at = ?")
+          .bind(hit, resumed, tokens, user.id, w.tool, same.reset_at));
         same.hit_at = hit; same.resumed_at = resumed;
       }
     } else {
-      stmts.push(env.DB.prepare("INSERT OR IGNORE INTO windows (user_id, tool, reset_at, hit_at, resumed_at) VALUES (?, ?, ?, ?, ?)")
-        .bind(user.id, w.tool, w.resetAt, w.hitAt, w.resumedAt ?? null));
+      stmts.push(env.DB.prepare("INSERT OR IGNORE INTO windows (user_id, tool, reset_at, hit_at, resumed_at, tokens) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(user.id, w.tool, w.resetAt, w.hitAt, w.resumedAt ?? null, tokens));
       const row = { tool: w.tool, reset_at: w.resetAt, hit_at: w.hitAt, resumed_at: w.resumedAt ?? null };
       existing.push(row);
       added.push(row);
@@ -324,9 +337,52 @@ async function subscribe(req, env, user) {
   return json({ ok: true });
 }
 
+// 出遅れで失ったもの: 時間・枠・API 料金換算。1年あたりの見込みも出す
+function lossSummary(ws, now = Date.now()) {
+  // ツールごとに「使い切った 1枠は API 料金でいくら分か」の平均を出す
+  const perTool = {};
+  let estimated = false, valueUsd = 0;
+  for (const w of ws) {
+    let t = null;
+    try { t = w.tokens ? JSON.parse(w.tokens) : null; } catch {}
+    if (!t) continue;
+    const c = costOf(w.tool, t);
+    const a = (perTool[w.tool] ??= { usd: 0, n: 0 });
+    a.usd += c.usd; a.n++;
+    valueUsd += c.usd;
+    estimated ||= c.estimated;
+  }
+  const avg = (tool) => (perTool[tool]?.n ? perTool[tool].usd / perTool[tool].n : null);
+  let lostMin = 0, lostWindows = 0, lostUsd = 0;
+  for (const w of ws) {
+    const d = delayOf(w);
+    if (d == null) continue;
+    const m = d / MIN;
+    lostMin += m;
+    lostWindows += lostWindowsOf(m);
+    lostUsd += lostWindowsOf(m) * (avg(w.tool) ?? 0);
+  }
+  // 1年あたりに直す (記録のある期間で割る。短すぎると大げさになるので最低 14日とみなす)
+  const first = ws.length ? Math.min(...ws.map((w) => w.hit_at)) : now;
+  const spanDays = Math.min(60, Math.max(14, (now - first) / DAY));
+  const perYear = 365 / spanDays;
+  return {
+    lostMin: Math.round(lostMin),
+    lostWindows: Math.round(lostWindows * 10) / 10,
+    lostUsd: Math.round(lostUsd),
+    valueUsd: Math.round(valueUsd),
+    avgWindowUsd: { claude: avg("claude") && Math.round(avg("claude")), codex: avg("codex") && Math.round(avg("codex")) },
+    year: { hours: Math.round((lostMin * perYear) / 60), windows: Math.round(lostWindows * perYear), usd: Math.round(lostUsd * perYear) },
+    priced: Object.keys(perTool).length > 0,
+    estimated,
+    pricingAsOf: PRICING_AS_OF,
+  };
+}
+
 // オンボーディングで「連携できた！」の瞬間に見せる要約
 async function meSummary(env, user) {
-  const ws = await userWindows(env, user.id, 60);
+  const { results: ws } = await env.DB.prepare("SELECT tool, hit_at, reset_at, resumed_at, tokens FROM windows WHERE user_id = ? AND hit_at > ?")
+    .bind(user.id, Date.now() - 60 * DAY).all();
   const cli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
   const delays = ws.map(delayOf).filter((d) => d != null);
   const s = await statsFor(env, user);
@@ -346,6 +402,7 @@ async function meSummary(env, user) {
       bestDay: Math.max(s.bestDay, s.todayCount),
       typicalDay,
       activeDays: active.length,
+      loss: lossSummary(ws),
     },
     plans: { claude: user.claude_plan, codex: user.codex_plan },
     stats: { streak: s.streak, todayCount: s.todayCount, goal: s.goal, xp: s.xp, weekXp: s.weekXp },

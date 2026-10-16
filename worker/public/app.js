@@ -217,20 +217,35 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
     const f = (t) => { const k = Math.min(1, (t - t0) / dur); el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(f); };
     requestAnimationFrame(f);
   }
+  // 金額: 日本語は円 (1ドル=150円の目安)、英語はドル
+  const ja = document.documentElement.lang === "ja";
+  const money = (usd) => (ja ? `${(Math.round((usd * 150) / 100) * 100).toLocaleString("ja-JP")}円` : `$${Math.round(usd).toLocaleString("en-US")}`);
+  const duration = (min) => (min >= 60 ? T("c.hm", { h: Math.floor(min / 60), m: min % 60 }) : T("c.m", { m: min }));
+
   function reveal(h) {
     history = h;
+    const loss = h.loss || {};
     $("[data-link-wait]", root).hidden = true;
     $(".skip", root).hidden = true;
     $("[data-link-done]", root).hidden = false;
     countUp($('[data-h="total"]', root), h.total);
-    countUp($('[data-h="avgLateMin"]', root), h.avgLateMin);
-    countUp($('[data-h="bestDay"]', root), h.bestDay);
-    const lost = h.lostMin >= 60 ? T("c.hm", { h: Math.floor(h.lostMin / 60), m: h.lostMin % 60 }) : T("c.m", { m: h.lostMin });
-    $('[data-h="message"]', root).textContent = h.total === 0
-      ? T("c.revealEmpty")
-      : h.avgLateMin
-        ? T("c.revealLost", { lost })
-        : T("c.revealGood");
+    $('[data-h="lostTime"]', root).textContent = loss.lostMin ? duration(loss.lostMin) : "—";
+    // ツールごとに「Claude Code 7,200円」のように並べる
+    const perWindow = [["Claude Code", loss.avgWindowUsd?.claude], ["Codex", loss.avgWindowUsd?.codex]].filter(([, v]) => v != null);
+    $('[data-h="windowValue"]', root).innerHTML = perWindow.length
+      ? perWindow.map(([name, v]) => `<span class="tv"><i>${name}</i>${money(v)}</span>`).join("")
+      : "—";
+    const msg = $('[data-h="message"]', root);
+    if (h.total === 0) msg.textContent = T("c.revealEmpty");
+    else if (!loss.lostMin) msg.textContent = T("c.revealGood");
+    else msg.textContent = loss.priced && loss.year.usd > 0
+      ? T("c.yearLoss", { hours: loss.year.hours.toLocaleString(), money: money(loss.year.usd) })
+      : T("c.yearLossNoPrice", { hours: loss.year.hours.toLocaleString() });
+    if (loss.priced) {
+      const note = $('[data-h="note"]', root);
+      note.textContent = T(loss.estimated ? "c.priceNoteEst" : "c.priceNote", { asOf: loss.pricingAsOf });
+      note.hidden = false;
+    }
     const r = $(".reveal-title", root).getBoundingClientRect();
     burst(r.left + r.width / 2, r.top + r.height / 2, 50);
   }

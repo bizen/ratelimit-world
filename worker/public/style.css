@@ -359,3 +359,21 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .top nav a { white-space: nowrap; }
 /* 日本語の見出しは文字数が多いので、スマホでは少し小さく */
 .lang-ja .display { font-size: clamp(28px, 7.4vw, 60px); }
+
+/* LP: 出遅れで失う量 */
+.loss {
+  margin: 0 0 28px; padding: 22px 20px; border-radius: 22px; background: var(--ink); color: var(--paper);
+}
+.loss p { margin: 0; }
+.loss-lead { font-weight: 700; font-size: 15px; opacity: .85; }
+.loss-num { font: 400 clamp(30px, 8vw, 48px)/1.2 var(--display); margin: 6px 0 8px !important; letter-spacing: -.01em; }
+.loss-num b { font-weight: 400; color: var(--ember); font-size: 1.35em; }
+.loss-sub b { color: var(--ember); font-family: var(--mono); }
+.loss-sub { font-size: 15px; }
+.loss-note { font-size: 12px; opacity: .65; margin-top: 10px !important; }
+.reveal-stats b { font-size: clamp(20px, 6vw, 30px); }
+.reveal-note { margin: -6px 0 14px; }
+.reveal-stats b { font-size: clamp(18px, 5.2vw, 26px); }
+.reveal-stats .tv { display: block; }
+.reveal-stats .tv i { display: block; font: 700 11px var(--body); font-style: normal; color: var(--muted); margin-top: 2px; }
+.reveal-stats span.tv { font: 400 clamp(16px, 4.6vw, 22px)/1.25 var(--display); color: var(--violet); }

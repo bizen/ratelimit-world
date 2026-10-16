@@ -126,8 +126,11 @@ export function parseResetText(text, hitMs) {
 // リミット到達: isApiErrorMessage かつ error=rate_limit の合成メッセージ。
 // 新しい版は quotaLimits.{rateLimitType, resetsAt} を持つので、それを優先する。
 const WEEKLY_RE = /(weekly|week|opus limit|sonnet limit|monthly)/i;
+// トークン使用量: 1回の応答ごとに [入力, キャッシュ書き込み(5分), キャッシュ書き込み(1時間), キャッシュ読み出し, 出力]。
+// API 料金に換算するのはサーバー側 (料金表を後から直せるように)
 export function scanClaude(sinceMs) {
   const hits = [], weekly = [], activity = [];
+  const usage = new Map(); // 同じ応答が複数行に書かれるので message.id + requestId で 1回に数える
   for (const file of walkJsonl(path.join(claudeDir(), "projects"), sinceMs)) {
     for (const line of lines(file)) {
       if (line.includes('"isApiErrorMessage":true')) {
@@ -153,6 +156,16 @@ export function scanClaude(sinceMs) {
         // リセット時刻が分からない、または 5時間枠と矛盾するものは数えない (週次などの誤検出を避ける)
         if (!reset || reset <= ts || reset - ts > WINDOW_MS + 15 * 60000) continue;
         hits.push({ ts, reset });
+      } else if (line.includes('"usage"') && line.includes('"type":"assistant"')) {
+        const ev = parseLine(line);
+        const m = ev?.message, u = m?.usage;
+        if (ev?.type !== "assistant" || !u || !m.model || m.model === "<synthetic>") continue;
+        const ts = Date.parse(ev.timestamp);
+        const key = `${m.id}:${ev.requestId}`;
+        if (!Number.isFinite(ts) || ts < sinceMs || usage.has(key)) continue;
+        const cw = u.cache_creation_input_tokens || 0;
+        const cw1h = u.cache_creation?.ephemeral_1h_input_tokens || 0;
+        usage.set(key, { ts, model: m.model, t: [u.input_tokens || 0, cw - cw1h, cw1h, u.cache_read_input_tokens || 0, u.output_tokens || 0] });
       } else if (line.includes('"type":"user"') && !line.includes('"tool_result"') && !line.includes('"isMeta":true')) {
         const ev = parseLine(line);
         if (ev?.type !== "user" || ev.isSidechain) continue;
@@ -161,7 +174,7 @@ export function scanClaude(sinceMs) {
       }
     }
   }
-  return { hits, weekly, activity };
+  return { hits, weekly, activity, usage: [...usage.values()] };
 }
 
 // ---------- Codex ----------
@@ -174,11 +187,14 @@ function limitOf(rl, minutes) {
 const resetOf = (lim, ts) => (lim.resets_at != null ? epochMs(+lim.resets_at) : lim.resets_in_seconds != null ? ts + lim.resets_in_seconds * 1000 : null);
 
 export function scanCodex(sinceMs) {
-  const hits = [], weekly = [], activity = [];
+  const hits = [], weekly = [], activity = [], usage = [];
   let current = null;
   for (const file of walkJsonl(path.join(codexDir(), "sessions"), sinceMs)) {
+    let model = null; // そのターンのモデルは直前の turn_context に書かれる
     for (const line of lines(file)) {
-      if (line.includes('"token_count"')) {
+      if (line.startsWith('{"timestamp"') && line.includes('"type":"turn_context"')) {
+        model = parseLine(line)?.payload?.model ?? model;
+      } else if (line.includes('"token_count"')) {
         const ev = parseLine(line);
         const p = ev?.payload;
         if (p?.type !== "token_count") continue;
@@ -190,6 +206,12 @@ export function scanCodex(sinceMs) {
         if (!current || ts > current.at) current = { at: ts, plan: p.rate_limits?.plan_type ?? null };
         if (lim && reset && Number(lim.used_percent) >= 100) hits.push({ ts, reset });
         if (wk && wreset && Number(wk.used_percent) >= 100) weekly.push({ ts, reset: wreset });
+        // input_tokens はキャッシュ分を含み、output_tokens は推論分を含む (OpenAI の数え方)
+        const u = p.info?.last_token_usage;
+        if (u && model && (u.input_tokens || u.output_tokens)) {
+          const cached = u.cached_input_tokens || 0;
+          usage.push({ ts, model, t: [Math.max(0, (u.input_tokens || 0) - cached), u.cache_write_input_tokens || 0, 0, cached, u.output_tokens || 0] });
+        }
       } else if (line.includes('"task_started"')) {
         const ev = parseLine(line);
         if (ev?.payload?.type !== "task_started") continue;
@@ -198,7 +220,7 @@ export function scanCodex(sinceMs) {
       }
     }
   }
-  return { hits, weekly, activity, current };
+  return { hits, weekly, activity, current, usage };
 }
 
 // ---------- plan ----------
@@ -220,7 +242,7 @@ export function claudePlan() {
 // ---------- windows ----------
 // 同じ枠への到達 (リトライなど) はリセット時刻で 1つにまとめる。
 // resumedAt = リセット後に最初に使い始めた時刻 (「出遅れ」の計算に使う)
-export function toWindows(tool, { hits, activity }) {
+export function toWindows(tool, { hits, activity, usage = [] }) {
   const sorted = [...hits].sort((a, b) => a.reset - b.reset);
   const out = [];
   for (const h of sorted) {
@@ -232,6 +254,14 @@ export function toWindows(tool, { hits, activity }) {
   for (const w of out) {
     const next = acts.find((t) => t >= w.resetAt);
     if (next != null) w.resumedAt = next;
+    // その 5時間枠 (リセットの 5時間前から) に使ったトークンをモデル別に合計する
+    const sum = {};
+    for (const e of usage) {
+      if (e.ts < w.resetAt - WINDOW_MS || e.ts >= w.resetAt) continue;
+      const a = (sum[e.model] ??= [0, 0, 0, 0, 0]);
+      for (let i = 0; i < 5; i++) a[i] += e.t[i];
+    }
+    if (Object.keys(sum).length) w.tokens = sum;
   }
   return out;
 }
