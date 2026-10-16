@@ -10,7 +10,7 @@ run_worker_first = false
 [[d1_databases]]
 binding = "DB"
 database_name = "ratelimit-world"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "a6449fff-d9b0-4b7b-aa3e-f7c6e7c5fc62"
 
 # リセット通知を時刻どおりに出すため、毎分起動する
 [triggers]
