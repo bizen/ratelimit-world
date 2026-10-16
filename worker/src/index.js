@@ -252,8 +252,17 @@ async function handleSync(req, env) {
   try { nextReset = JSON.parse(user.next_reset || "{}"); } catch {}
   for (const tool of TOOLS) {
     const r = body.nextReset?.[tool];
-    if (r && isTime(r.resetAt) && r.resetAt > now && r.resetAt - now <= WINDOW_MS + 15 * MIN) nextReset[tool] = { resetAt: r.resetAt, exact: !!r.exact };
-    if (nextReset[tool]?.resetAt <= now) delete nextReset[tool];
+    const pct = (x) => (Number.isFinite(x) ? Math.max(0, Math.min(100, x)) : null);
+    if (r && isTime(r.resetAt) && r.resetAt > now && r.resetAt - now <= WINDOW_MS + 15 * MIN) {
+      nextReset[tool] = { resetAt: r.resetAt, exact: !!r.exact, pct: pct(r.pct), at: isTime(r.at) ? r.at : null };
+    }
+    // 週間枠の使用率 (Codex のみ。ログに正確な値が書かれる)
+    if (r?.week && isTime(r.week.resetAt) && r.week.resetAt > now && pct(r.week.pct) != null) {
+      (nextReset[tool] ??= {}).week = { pct: pct(r.week.pct), resetAt: r.week.resetAt };
+    }
+    if (nextReset[tool] && !(nextReset[tool].resetAt > now)) { delete nextReset[tool].resetAt; delete nextReset[tool].pct; }
+    if (nextReset[tool]?.week && !(nextReset[tool].week.resetAt > now)) delete nextReset[tool].week;
+    if (nextReset[tool] && !Object.keys(nextReset[tool]).some((k) => k === "resetAt" || k === "week")) delete nextReset[tool];
   }
   stmts.push(env.DB.prepare("UPDATE users SET tz = ?, claude_plan = ?, codex_plan = ?, next_reset = ?, last_sync_at = ? WHERE id = ?")
     .bind(tz, claudePlan, codexPlan, JSON.stringify(nextReset), now, user.id));

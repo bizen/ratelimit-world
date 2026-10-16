@@ -252,7 +252,14 @@ export function scanCodex(sinceMs) {
         const lim = limitOf(p.rate_limits, 300), wk = limitOf(p.rate_limits, 10080);
         const reset = lim && resetOf(lim, ts), wreset = wk && resetOf(wk, ts);
         // 使用率そのものは送らない (使っていないときは古い数字になるため)。到達の判定とプランだけに使う
-        if (!current || ts > current.at) current = { at: ts, plan: p.rate_limits?.plan_type ?? null, resetAt: reset || null };
+        // 使用率は同じ枠の中では増えるだけなので、枠が続いている間は最後の値がそのまま今の値になる
+        if (!current || ts > current.at) {
+          current = {
+            at: ts, plan: p.rate_limits?.plan_type ?? null, resetAt: reset || null,
+            pct: lim ? Number(lim.used_percent) : null,
+            week: wk && wreset ? { pct: Number(wk.used_percent), resetAt: wreset } : null,
+          };
+        }
         if (lim && reset && Number(lim.used_percent) >= 100) hits.push({ ts, reset });
         if (wk && wreset && Number(wk.used_percent) >= 100) weekly.push({ ts, reset: wreset });
         // input_tokens はキャッシュ分を含み、output_tokens は推論分を含む (OpenAI の数え方)
@@ -349,7 +356,8 @@ function nextResets(claude, codex) {
   const out = {};
   const c = claudeWindowEnd([...claude.activity, ...claude.usage.map((u) => u.ts)], claude.hits);
   if (c.resetAt > now) out.claude = c;
-  if (codex.current?.resetAt > now) out.codex = { resetAt: codex.current.resetAt, exact: true };
+  if (codex.current?.resetAt > now) out.codex = { resetAt: codex.current.resetAt, exact: true, pct: codex.current.pct, at: codex.current.at };
+  if (codex.current?.week?.resetAt > now) (out.codex ??= {}).week = codex.current.week;
   return out;
 }
 

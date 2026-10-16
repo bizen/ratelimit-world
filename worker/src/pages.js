@@ -206,8 +206,15 @@ function heatmap(ctx, s, days = 28) {
 // 次のリセット時刻。リミット中ならその正確な時刻、使用中なら PC から届いた予定 (Claude Code は推定)
 function nextResetText(ctx, tool, s, now, limitedAt) {
   const r = limitedAt ? { resetAt: limitedAt, exact: true } : s.nextReset?.[tool];
-  if (!r || r.resetAt <= now) return `<span class="none">${ctx.t("dial.noWindow")}</span>`;
+  if (!(r?.resetAt > now)) return `<span class="none">${ctx.t("dial.noWindow")}</span>`;
   return `${localTime(r.resetAt, s.tz)}${r.exact ? "" : `<small>${ctx.t("dial.estimated")}</small>`}`;
+}
+
+// 週間枠の使用率 (正確な値が分かる Codex のみ)
+function weekRow(ctx, tool, s, now) {
+  const w = s.nextReset?.[tool]?.week;
+  if (!w || !(w.resetAt > now)) return "";
+  return `<div><dt>${ctx.t("dial.week")}</dt><dd>${Math.round(w.pct)}%<small>${ctx.t("dial.weekReset", fmtWhen(ctx.lang, w.resetAt, s.tz))}</small></dd></div>`;
 }
 
 // ツールごとの「次のリセット」ダイヤル
@@ -216,7 +223,7 @@ function dial(ctx, tool, s, now) {
   const x = s.tools[tool];
   const last = s.lastReset[tool];
   const lock = s.weeklyLocks.find((w) => w.tool === tool);
-  let state, resetAt = null, frac = 0, sub;
+  let state, resetAt = null, frac = 0, sub, usedPct = null;
   if (lock) {
     state = "weekly";
     resetAt = lock.resetAt;
@@ -232,7 +239,9 @@ function dial(ctx, tool, s, now) {
     const r = s.nextReset[tool];
     state = "using";
     resetAt = r.resetAt;
-    frac = Math.min(1, Math.max(0, (r.resetAt - now) / WINDOW_MS));
+    // 使用率が分かれば (Codex) リングは使用率、分からなければ (Claude Code) 残り時間
+    usedPct = r.pct ?? null;
+    frac = usedPct != null ? usedPct / 100 : Math.min(1, Math.max(0, (r.resetAt - now) / WINDOW_MS));
     sub = t(r.exact ? "dial.sub.using" : "dial.sub.usingEst", localTime(r.resetAt, s.tz));
   } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
     state = "ready";
@@ -250,11 +259,12 @@ function dial(ctx, tool, s, now) {
       <circle class="track" cx="60" cy="60" r="${R}"/>
       <circle class="fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - frac)).toFixed(1)}" data-c="${C.toFixed(1)}"/>
     </svg>
-    <div class="ring-text"><small data-ready-label="${t("dial.ready")}">${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
+    <div class="ring-text"><small data-ready-label="${t("dial.ready")}">${usedPct != null ? t("dial.usedPct", Math.round(usedPct)) : t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
   </div>
   <p class="dial-sub">${esc(sub)}</p>
   <dl class="dial-foot">
     <div><dt>${t("dial.nextReset")}</dt><dd>${nextResetText(ctx, tool, s, now, state === "limited" ? resetAt : null)}</dd></div>
+    ${weekRow(ctx, tool, s, now)}
     <div><dt>${t("dial.yesterday")}</dt><dd>${t("windows", s.yesterdayByTool[tool])}</dd></div>
     <div><dt>${t("dial.lastHit")}</dt><dd>${s.lastHitByTool[tool]
       ? `${ago(ctx, now - s.lastHitByTool[tool])}<small>${s.lastHitByTool[tool] < now - 20 * 3600 * 1000 ? fmtWhen(lang, s.lastHitByTool[tool], s.tz) : localTime(s.lastHitByTool[tool], s.tz)}</small>`
