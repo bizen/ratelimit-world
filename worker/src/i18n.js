@@ -615,7 +615,7 @@ export const T = {
     "c.maxed": "Maxed out!",
     "c.paceOk": "✓ On pace",
     "c.paceBad": "⚠ Falling short",
-    "c.paceMaxAt": "max at {t}",
+    "c.paceMaxAt": "max out at {t}",
     "c.paceShortAt": "{p}% wasted",
     "c.saved": "Saved",
     "c.saveFailed": "Couldn't save. Please try again",
