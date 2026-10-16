@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
   lang TEXT,                                       -- 'ja' | 'en' (スマホ通知の言語。画面は cookie が優先)
   claude_plan TEXT,                                -- 'pro' | 'max_5x' | 'max_20x' ... (CLI が ~/.claude.json から読む)
   codex_plan TEXT,                                 -- 'plus' | 'pro' ... (Codex のログの plan_type)
+  next_reset TEXT,                                 -- 今の 5時間枠のリセット予定 {claude|codex: {resetAt, exact}}
   last_sync_at INTEGER,
   onboarded_at INTEGER,                            -- /welcome を終えた時刻
   created_at INTEGER NOT NULL

@@ -252,7 +252,7 @@ export function scanCodex(sinceMs) {
         const lim = limitOf(p.rate_limits, 300), wk = limitOf(p.rate_limits, 10080);
         const reset = lim && resetOf(lim, ts), wreset = wk && resetOf(wk, ts);
         // 使用率そのものは送らない (使っていないときは古い数字になるため)。到達の判定とプランだけに使う
-        if (!current || ts > current.at) current = { at: ts, plan: p.rate_limits?.plan_type ?? null };
+        if (!current || ts > current.at) current = { at: ts, plan: p.rate_limits?.plan_type ?? null, resetAt: reset || null };
         if (lim && reset && Number(lim.used_percent) >= 100) hits.push({ ts, reset });
         if (wk && wreset && Number(wk.used_percent) >= 100) weekly.push({ ts, reset: wreset });
         // input_tokens はキャッシュ分を含み、output_tokens は推論分を含む (OpenAI の数え方)
@@ -316,6 +316,22 @@ export function toWindows(tool, { hits, activity, usage = [] }) {
   return out;
 }
 
+// Claude Code の今の 5時間枠がいつリセットされるか (推定)。
+// 枠は「前の枠が終わったあと最初に使った時刻」から 5時間。リミットに当たった枠は正確なリセット時刻で合わせる
+export function claudeWindowEnd(times, hits) {
+  const acts = [...times].sort((a, b) => a - b);
+  const resets = hits.map((h) => h.reset).sort((a, b) => a - b);
+  let end = -Infinity, exact = false;
+  for (const t of acts) {
+    if (t < end) continue;
+    end = t + WINDOW_MS;
+    exact = false;
+    const r = resets.find((x) => x > t && x <= t + WINDOW_MS + 15 * 60000);
+    if (r) { end = r; exact = true; }
+  }
+  return { resetAt: end, exact };
+}
+
 // 週間リミットの到達はリセット時刻ごとに 1つ
 function toWeekly(tool, hits) {
   const out = [];
@@ -324,6 +340,16 @@ function toWeekly(tool, hits) {
     if (last && h.reset - last.resetAt < 6 * HOUR) { last.hitAt = Math.min(last.hitAt, h.ts); continue; }
     out.push({ tool, hitAt: h.ts, resetAt: h.reset });
   }
+  return out;
+}
+
+// 次のリセット時刻 (今まさに枠の途中のものだけ)。Codex はログに書かれた正確な値、Claude Code は推定
+function nextResets(claude, codex) {
+  const now = Date.now();
+  const out = {};
+  const c = claudeWindowEnd([...claude.activity, ...claude.usage.map((u) => u.ts)], claude.hits);
+  if (c.resetAt > now) out.claude = c;
+  if (codex.current?.resetAt > now) out.codex = { resetAt: codex.current.resetAt, exact: true };
   return out;
 }
 
@@ -341,6 +367,7 @@ export function collect(days) {
     windows,
     weeklyHits,
     plans: { claude: claudePlan(), codex: codex.current?.plan ?? null },
+    nextReset: nextResets(claude, codex),
   };
 }
 

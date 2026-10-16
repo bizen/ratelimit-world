@@ -136,7 +136,9 @@ async function userWeekly(env, userId, days = STATS_DAYS) {
 
 async function statsFor(env, user, now = Date.now()) {
   const [ws, weekly] = await Promise.all([userWindows(env, user.id), userWeekly(env, user.id)]);
-  return computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly });
+  let nextReset = {};
+  try { nextReset = JSON.parse(user.next_reset || "{}"); } catch {}
+  return { ...computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly }), nextReset };
 }
 
 // 同じ通知を二度送らない。初めてなら true
@@ -245,8 +247,16 @@ async function handleSync(req, env) {
   const plan = (v, prev) => (typeof v === "string" && /^[a-z0-9_]{1,20}$/.test(v) ? v : prev);
   const claudePlan = plan(body.plans?.claude, user.claude_plan);
   const codexPlan = plan(body.plans?.codex, user.codex_plan);
-  stmts.push(env.DB.prepare("UPDATE users SET tz = ?, claude_plan = ?, codex_plan = ?, last_sync_at = ? WHERE id = ?")
-    .bind(tz, claudePlan, codexPlan, now, user.id));
+  // 今の 5時間枠のリセット予定。届いたツールだけ上書きし、過ぎたものは捨てる
+  let nextReset = {};
+  try { nextReset = JSON.parse(user.next_reset || "{}"); } catch {}
+  for (const tool of TOOLS) {
+    const r = body.nextReset?.[tool];
+    if (r && isTime(r.resetAt) && r.resetAt > now && r.resetAt - now <= WINDOW_MS + 15 * MIN) nextReset[tool] = { resetAt: r.resetAt, exact: !!r.exact };
+    if (nextReset[tool]?.resetAt <= now) delete nextReset[tool];
+  }
+  stmts.push(env.DB.prepare("UPDATE users SET tz = ?, claude_plan = ?, codex_plan = ?, next_reset = ?, last_sync_at = ? WHERE id = ?")
+    .bind(tz, claudePlan, codexPlan, JSON.stringify(nextReset), now, user.id));
   await env.DB.batch(stmts);
 
   const fresh = { ...user, tz };

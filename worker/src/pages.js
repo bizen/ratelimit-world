@@ -203,6 +203,13 @@ function heatmap(ctx, s, days = 28) {
   return `<div class="heat" role="img" aria-label="${t("heat.aria", days)}">${cells}</div>`;
 }
 
+// 次のリセット時刻。リミット中ならその正確な時刻、使用中なら PC から届いた予定 (Claude Code は推定)
+function nextResetText(ctx, tool, s, now, limitedAt) {
+  const r = limitedAt ? { resetAt: limitedAt, exact: true } : s.nextReset?.[tool];
+  if (!r || r.resetAt <= now) return `<span class="none">${ctx.t("dial.noWindow")}</span>`;
+  return `${localTime(r.resetAt, s.tz)}${r.exact ? "" : `<small>${ctx.t("dial.estimated")}</small>`}`;
+}
+
 // ツールごとの「次のリセット」ダイヤル
 function dial(ctx, tool, s, now) {
   const { t, lang } = ctx;
@@ -220,6 +227,13 @@ function dial(ctx, tool, s, now) {
     resetAt = x.resetAt;
     frac = Math.min(1, Math.max(0, (x.resetAt - now) / WINDOW_MS));
     sub = t("dial.sub.limited", localTime(x.resetAt, s.tz));
+  } else if (s.nextReset?.[tool]?.resetAt > now) {
+    // 使用中: 今の枠のリセットまでを数える (Claude Code は推定)
+    const r = s.nextReset[tool];
+    state = "using";
+    resetAt = r.resetAt;
+    frac = Math.min(1, Math.max(0, (r.resetAt - now) / WINDOW_MS));
+    sub = t(r.exact ? "dial.sub.using" : "dial.sub.usingEst", localTime(r.resetAt, s.tz));
   } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
     state = "ready";
     sub = t("dial.sub.ready", localTime(last.reset_at, s.tz));
@@ -240,6 +254,7 @@ function dial(ctx, tool, s, now) {
   </div>
   <p class="dial-sub">${esc(sub)}</p>
   <dl class="dial-foot">
+    <div><dt>${t("dial.nextReset")}</dt><dd>${nextResetText(ctx, tool, s, now, state === "limited" ? resetAt : null)}</dd></div>
     <div><dt>${t("dial.yesterday")}</dt><dd>${t("windows", s.yesterdayByTool[tool])}</dd></div>
     <div><dt>${t("dial.lastHit")}</dt><dd>${s.lastHitByTool[tool]
       ? `${ago(ctx, now - s.lastHitByTool[tool])}<small>${s.lastHitByTool[tool] < now - 20 * 3600 * 1000 ? fmtWhen(lang, s.lastHitByTool[tool], s.tz) : localTime(s.lastHitByTool[tool], s.tz)}</small>`

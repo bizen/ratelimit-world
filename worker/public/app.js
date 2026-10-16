@@ -17,7 +17,7 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       const clock = $(".clock", d);
       if (left <= 0) {
         // リセットの瞬間: GO に切り替える
-        d.classList.remove("limited", "weekly");
+        d.classList.remove("limited", "weekly", "using");
         d.classList.add("ready");
         delete d.dataset.reset;
         $(".ring-text small", d).textContent = T("c.ready");
@@ -27,7 +27,7 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       const h = Math.floor(left / 3600000), m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;
       // 週間リミットのように 1日以上先なら「3日 13時間」で見せる
       clock.textContent = h >= 24 ? T("c.days", { d: Math.floor(h / 24), h: h % 24 }) : `${h}:${pad(m)}:${pad(s)}`;
-      if (d.classList.contains("limited")) {
+      if (d.classList.contains("limited") || d.classList.contains("using")) {
         const fill = $(".fill", d);
         fill.style.strokeDashoffset = (+fill.dataset.c * (1 - Math.min(1, left / WINDOW_MS))).toFixed(1);
       }

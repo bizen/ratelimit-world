@@ -421,3 +421,5 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .dial.tool-claude .dial-foot dt { color: rgb(255 255 255 / .82); }
 .dial.tool-codex .dial-foot { border-top-color: #EDEDED; background: #FAFAFA; }
 .dial.tool-codex .dial-foot dt { color: #6B6B6B; }
+.dial-foot dd .none { font: 500 12px var(--body); opacity: .7; }
+.dial.using .fill { opacity: .55; }
