@@ -283,18 +283,18 @@ function writtenCard(ctx, total) {
   return `<section class="card written" id="written"><h2 class="h3">📚 ${ctx.t("wr.h")}</h2>${writtenHead(ctx, total)}</section>`;
 }
 
-// プロフィール: 段階のはしご。届いた段と次の段は名前を見せ、その先は「？？？」(最後のアカシックレコードだけは見せる)
+// プロフィール: 段階のはしご。届いた段と次の段は名前を見せ、その先は名前を「？？？」にして必要なトークン数だけ見せる
+// (最後のアカシックレコードだけは名前も見せる)
 function writtenLadder(ctx, total) {
   const { t, lang } = ctx;
   const w = writtenLevel(total);
   const row = (state, name, tok) => `<li class="${state}"><span class="wr-mark" aria-hidden="true">${state === "done" ? "✓" : ""}</span><span class="wr-name">${name}</span><span class="wr-tok">${tok}</span></li>`;
   const last = WRITTEN.length - 1;
-  const hidden = Math.max(0, last - w.next - 1); // 次の段とアカシックレコードのあいだの、まだ見せない段の数
-  const rows = [
-    w.next < last ? row("ahead", esc(t(`w.${WRITTEN[last][0]}`)), "∞") : "",
-    hidden ? row("ahead", t("wr.hiddenN", hidden), "") : "",
-    ...WRITTEN.slice(0, w.next + 1).map(([key, tokens], i) => row(i <= w.reached ? "done" : "next", esc(t(`w.${key}`)), fmtTokens(lang, tokens))).reverse(),
-  ].join("");
+  const rows = WRITTEN.map(([key, tokens], i) => {
+    const state = i <= w.reached ? "done" : i === w.next ? "next" : "ahead";
+    const name = state === "ahead" && i !== last ? t("wr.hidden") : esc(t(`w.${key}`));
+    return row(state, name, fmtTokens(lang, tokens));
+  }).reverse().join("");
   return `<section class="card written"><h2 class="h3">📚 ${t("wr.h")}</h2>${writtenHead(ctx, total)}<ol class="wr-ladder">${rows}</ol><p class="muted small">${t("wr.note")}</p></section>`;
 }
 

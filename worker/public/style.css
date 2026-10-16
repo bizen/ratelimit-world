@@ -720,5 +720,5 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .wr-ladder li.done .wr-mark { color: var(--go); font-weight: 700; }
 .wr-ladder li.next { background: var(--violet-soft); font-weight: 700; }
 .wr-ladder li.next .wr-mark::before { content: "▶"; color: var(--violet); font-size: 11px; }
-.wr-ladder li.ahead { color: var(--muted); }
+.wr-ladder li.ahead { color: var(--muted); padding-top: 4px; padding-bottom: 4px; font-size: 13px; }
 .wr-tok { font: 700 12px var(--mono); color: var(--muted); }
