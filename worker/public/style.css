@@ -510,3 +510,8 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .settings label.toggle { flex-wrap: nowrap; }
 .settings label.toggle > span { flex: 1; min-width: 0; }
 .settings label.toggle input { flex: none; margin-top: 3px; }
+/* 2段の枠: 上下の段を枠いっぱいに広げる (マスの中央寄せが段にも効いて細くなっていた) */
+.slot.next.split { justify-items: stretch; align-items: stretch; background: var(--surface); }
+.slot.split .half { width: 100%; }
+.slot.split .half:first-child { border-radius: 14px 14px 0 0; }
+.slot.split .half:last-child { border-radius: 0 0 14px 14px; }
