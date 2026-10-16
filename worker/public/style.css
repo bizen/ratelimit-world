@@ -376,9 +376,6 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .reveal-stats b { font-size: clamp(20px, 6vw, 30px); }
 .reveal-note { margin: -6px 0 14px; }
 .reveal-stats b { font-size: clamp(18px, 5.2vw, 26px); }
-.reveal-stats .tv { display: block; }
-.reveal-stats .tv i { display: block; font: 700 11px var(--body); font-style: normal; color: var(--muted); margin-top: 2px; }
-.reveal-stats span.tv { font: 400 clamp(16px, 4.6vw, 22px)/1.25 var(--display); color: var(--violet); }
 
 /* オンボーディング: 戻る */
 .back-link { padding: 4px 0; margin-bottom: 4px; text-decoration: none; }

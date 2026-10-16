@@ -709,7 +709,7 @@ export function welcome(ctx, { origin, vapidKey }) {
       <div class="reveal-stats">
         <div><b data-h="total">0</b><span>${t("wel.total")}</span></div>
         <div><b data-h="lostTime">—</b><span>${t("wel.lostTime")}</span></div>
-        <div><b data-h="windowValue">—</b><span>${t("wel.windowValue")}</span></div>
+        <div><b data-h="yearLoss">—</b><span>${t("wel.yearLoss")}</span></div>
       </div>
       <p class="reveal-msg" data-h="message"></p>
       <p class="reveal-note muted small" data-h="note" hidden></p>
@@ -765,7 +765,7 @@ function hm(ctx, min) {
   return h ? ctx.t("p.hm", h, m) : ctx.t("p.m", m);
 }
 
-function profileRecords(ctx, s, ps, loss) {
+function profileRecords(ctx, s, ps) {
   const { t, lang } = ctx;
   const tile = (value, label, sub = "", cls = "") => `<div class="ptile"><dd class="${cls}">${value}</dd><dt>${label}</dt>${sub ? `<small>${sub}</small>` : ""}</div>`;
   const year = (k) => k.slice(0, 4) !== String(new Date().getUTCFullYear());
@@ -780,7 +780,6 @@ function profileRecords(ctx, s, ps, loss) {
     tile(s.xp.toLocaleString(), t("p.totalXp")),
     tile(String(s.total), t("p.total"), `Claude Code ${ps.byTool.claude} · Codex ${ps.byTool.codex}`),
     tile(t("p.days", ps.activeDays), t("p.activeDays"), t("p.goalDays", ps.goalDays)),
-    loss.priced ? tile(`$${loss.valueUsd.toLocaleString()}`, t("p.value"), t("p.value.sub")) : "",
     ps.firstAt ? tile(fmtDay(lang, new Date(ps.firstAt).toISOString().slice(0, 10), true), t("p.since"), "", "sm") : "",
   ].filter(Boolean).join("");
   const restarts = ps.restarts ? [
@@ -837,7 +836,7 @@ ${self && !u.public ? `<p class="private-note" role="status">🔒 ${t("p.private
   ${todayTrack(ctx, s, Date.now())}
   ${heatmap(ctx, s)}
 </section>
-${social.ps ? profileRecords(ctx, s, social.ps, social.loss) : ""}
+${social.ps ? profileRecords(ctx, s, social.ps) : ""}
 ${u.public ? `<section class="card share-card">
   <img src="/@${esc(u.login)}/card.png?lang=${lang}" alt="${esc(t("prof.cardAlt", u.login))}" width="600" height="315">
   <div class="row">

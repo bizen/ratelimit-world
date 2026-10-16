@@ -103,6 +103,9 @@ export function delayOf(w) {
 export const COMBO_XP = [100, 120, 150, 200, 300];
 export const comboXp = (n) => COMBO_XP[Math.min(n, COMBO_XP.length) - 1];
 
+// 出遅れ d 分は、その日の枠を d / (300 + d) 枠ぶん減らす (5時間の枠が 5時間+d 分かかるのと同じ)
+export const lostWindowsOf = (delayMin) => delayMin / (300 + delayMin);
+
 // 称号は「自分の目標」が基準。目標1枠の人も3枠の人も、同じように限界突破までたどり着ける。
 // 表示する言葉は i18n.js の tierName が決める
 export function tierOf(n, goal) {

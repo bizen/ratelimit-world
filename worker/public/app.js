@@ -253,7 +253,6 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
   }
   // 金額: 日本語は円 (1ドル=150円の目安)、英語はドル
   const ja = document.documentElement.lang === "ja";
-  const money = (usd) => (ja ? `${(Math.round((usd * 150) / 100) * 100).toLocaleString("ja-JP")}円` : `$${Math.round(usd).toLocaleString("en-US")}`);
   const duration = (min) => (min >= 60 ? T("c.hm", { h: Math.floor(min / 60), m: min % 60 }) : T("c.m", { m: min }));
 
   function reveal(h) {
@@ -264,22 +263,12 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
     $("[data-link-done]", root).hidden = false;
     countUp($('[data-h="total"]', root), h.total);
     $('[data-h="lostTime"]', root).textContent = loss.lostMin ? duration(loss.lostMin) : "—";
-    // ツールごとに「Claude Code 7,200円」のように並べる
-    const perWindow = [["Claude Code", loss.avgWindowUsd?.claude], ["Codex", loss.avgWindowUsd?.codex]].filter(([, v]) => v != null);
-    $('[data-h="windowValue"]', root).innerHTML = perWindow.length
-      ? perWindow.map(([name, v]) => `<span class="tv"><i>${name}</i>${money(v)}</span>`).join("")
-      : "—";
+    // このペースで1年に取りこぼす時間
+    $('[data-h="yearLoss"]', root).textContent = loss.year?.hours ? T("c.aboutHours", { n: loss.year.hours.toLocaleString() }) : "—";
     const msg = $('[data-h="message"]', root);
     if (h.total === 0) msg.textContent = T("c.revealEmpty");
     else if (!loss.lostMin) msg.textContent = T("c.revealGood");
-    else msg.textContent = loss.priced && loss.year.usd > 0
-      ? T("c.yearLoss", { hours: loss.year.hours.toLocaleString(), money: money(loss.year.usd) })
-      : T("c.yearLossNoPrice", { hours: loss.year.hours.toLocaleString() });
-    if (loss.priced) {
-      const note = $('[data-h="note"]', root);
-      note.textContent = T(loss.estimated ? "c.priceNoteEst" : "c.priceNote", { asOf: loss.pricingAsOf });
-      note.hidden = false;
-    }
+    else msg.textContent = T("c.yearLoss", { hours: loss.year.hours.toLocaleString() });
     const r = $(".reveal-title", root).getBoundingClientRect();
     burst(r.left + r.width / 2, r.top + r.height / 2, 50);
   }

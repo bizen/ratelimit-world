@@ -169,14 +169,8 @@ test("all notifications render in both languages", async () => {
   }
 });
 
-test("API value of a window and lost windows from a delay", async () => {
-  const { costOf, lostWindowsOf, priceOf } = await import("../src/pricing.js");
-  // Opus 5.5: 入力 $4, 書き込み5分 $5, 書き込み1時間 $8, 読み出し $0.20, 出力 $20 (100万トークンあたり)
-  const c = costOf("claude", { "claude-opus-5-5": [1e6, 1e6, 1e6, 1e6, 1e6] });
-  assert.equal(Math.round(c.usd * 100) / 100, 4 + 5 + 8 + 0.2 + 20);
-  assert.equal(c.estimated, false);
-  assert.equal(costOf("codex", { "codex-auto-review": [1e6, 0, 0, 0, 0] }).estimated, true);
-  assert.deepEqual(priceOf("codex", "gpt-6.1-sol").p, [2, 10, 0.1]);
+test("lost windows from a delay", async () => {
+  const { lostWindowsOf } = await import("../src/logic.js");
   assert.equal(lostWindowsOf(30), 30 / 330);
 });
 
