@@ -226,10 +226,7 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .axis span { white-space: nowrap; }
 @media (max-width: 520px) { .blk em { display: none; } }
 
-/* 見出しのルビ「限界(レートリミット)」 */
-.display ruby { ruby-position: over; }
-.display rt { font: 700 .24em/1.2 var(--mono); letter-spacing: .04em; color: var(--violet); padding-bottom: .15em; }
-.hero .display { padding-top: .3em; }
+
 
 /* ---------- 今日のトラック (1日の中で枠を積む) ---------- */
 .today-head h1 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 8px; }
@@ -260,7 +257,7 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .slot.done .xp { opacity: 1; }
 .slot.next { border-color: var(--violet); color: var(--violet); background: var(--violet-soft); }
 .slot.goal::after {
-  content: "目標"; position: absolute; top: -9px; right: -4px; font: 700 10px var(--body);
+  content: attr(data-goal-label); position: absolute; top: -9px; right: -4px; font: 700 10px var(--body);
   background: var(--surface); color: var(--ember); border: 2px solid var(--ember); border-radius: 999px; padding: 0 6px;
 }
 .today-note { margin: 0 0 4px; font-size: 14px; }
@@ -350,3 +347,15 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 /* 4つ並ぶとき (週間制覇あり) はスマホで 2×2 にする */
 @media (max-width: 520px) { .stats-row:has(> :nth-child(4)) { grid-template-columns: 1fr 1fr; } }
 .cell.locked { background: color-mix(in srgb, #FFC53D 35%, var(--surface)); border-color: #E8B931; }
+
+/* フッター (言語の切り替え) */
+.foot {
+  max-width: 760px; margin: 0 auto; padding: 24px 16px max(32px, env(safe-area-inset-bottom));
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  border-top: 2px solid var(--line); font-size: 13px; color: var(--muted);
+}
+.brand-sm { font: 400 14px var(--display); }
+.foot .lang { font-weight: 700; text-decoration: none; border: 2px solid var(--line); border-radius: 999px; padding: 4px 12px; }
+.top nav a { white-space: nowrap; }
+/* 日本語の見出しは文字数が多いので、スマホでは少し小さく */
+.lang-ja .display { font-size: clamp(28px, 7.4vw, 60px); }

@@ -1,6 +1,8 @@
 // ratelimit.world: Cloudflare Worker (API + ページ + 毎分の通知 Cron)
-import { computeStats, msg, validTz, localTime, dayKey, delayOf, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
+import { computeStats, validTz, localTime, dayKey, delayOf, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
 import { sendPush, b64u } from "./webpush.js";
+import { pickLang, tr, LANGS } from "./i18n.js";
+import { notice } from "./notice.js";
 import * as pages from "./pages.js";
 
 const SESSION_COOKIE = "rw_session";
@@ -26,6 +28,7 @@ function getCookie(req, name) {
 }
 const cookie = (name, value, maxAge) =>
   `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+const langCookie = (lang) => cookie("rw_lang", lang, 365 * 86400);
 
 // cookie 認証の POST は同じオリジンからだけ受け付ける (CSRF 対策)
 function sameOrigin(req) {
@@ -62,6 +65,12 @@ async function cliUser(req, env) {
 }
 
 const safeNext = (n) => (n && /^\/[^/\\]/.test(n) ? n : "/me");
+// 画面を組み立てるときの共通情報 (ログイン中のユーザー・言語・翻訳関数)
+const makeCtx = (req, user) => {
+  const lang = pickLang(req, user);
+  const url = new URL(req.url);
+  return { user, lang, t: tr(lang), path: url.pathname + url.search };
+};
 
 async function githubLogin(req, env) {
   const url = new URL(req.url);
@@ -78,22 +87,24 @@ async function githubLogin(req, env) {
 async function githubCallback(req, env) {
   const url = new URL(req.url);
   const [state, next] = (getCookie(req, "rw_oauth") || "").split("|");
-  if (!state || state !== url.searchParams.get("state")) return html(pages.message("ログインに失敗しました", "もう一度お試しください。"), 400);
+  const ctx = makeCtx(req, null);
+  const fail = (key) => html(pages.message(ctx, ctx.t("err.login.title"), ctx.t(key)), 400);
+  if (!state || state !== url.searchParams.get("state")) return fail("err.login.retry");
   const tok = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
     body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code: url.searchParams.get("code") }),
   }).then((r) => r.json());
-  if (!tok.access_token) return html(pages.message("ログインに失敗しました", "GitHub から認証情報を受け取れませんでした。"), 400);
+  if (!tok.access_token) return fail("err.login.token");
   const gh = await fetch("https://api.github.com/user", {
     headers: { authorization: `Bearer ${tok.access_token}`, "user-agent": "ratelimit.world", accept: "application/vnd.github+json" },
   }).then((r) => r.json());
-  if (!gh.id) return html(pages.message("ログインに失敗しました", "GitHub のユーザー情報を取得できませんでした。"), 400);
-  const user = await upsertUser(env, { githubId: gh.id, login: gh.login, name: gh.name, avatar: gh.avatar_url });
+  if (!gh.id) return fail("err.login.user");
+  const user = await upsertUser(env, { githubId: gh.id, login: gh.login, name: gh.name, avatar: gh.avatar_url, lang: ctx.lang });
   return startSession(env, user.id, safeNext(next));
 }
 
-async function upsertUser(env, { githubId, login, name, avatar }) {
+async function upsertUser(env, { githubId, login, name, avatar, lang }) {
   const now = Date.now();
   if (githubId) {
     const u = await env.DB.prepare("SELECT * FROM users WHERE github_id = ?").bind(githubId).first();
@@ -105,8 +116,8 @@ async function upsertUser(env, { githubId, login, name, avatar }) {
     const u = await env.DB.prepare("SELECT * FROM users WHERE login = ?").bind(login).first();
     if (u) return u;
   }
-  return env.DB.prepare("INSERT INTO users (github_id, login, name, avatar_url, created_at) VALUES (?, ?, ?, ?, ?) RETURNING *")
-    .bind(githubId ?? null, login, name ?? null, avatar ?? null, now).first();
+  return env.DB.prepare("INSERT INTO users (github_id, login, name, avatar_url, lang, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING *")
+    .bind(githubId ?? null, login, name ?? null, avatar ?? null, LANGS.includes(lang) ? lang : null, now).first();
 }
 
 // ---------- data ----------
@@ -230,16 +241,16 @@ async function handleSync(req, env) {
   const prefs = parseNotify(fresh);
   // 週間リミットに当たったばかりなら、いちばん大きなごほうびを知らせる
   for (const w of weeklyAdded.filter((x) => now - x.hit_at < 60 * MIN)) {
-    if ((await claim(env, user.id, `weekly:${w.tool}:${w.reset_at}`)) && prefs.hit) await pushToUser(env, user.id, msg.weekly(w.tool, s, w));
+    if ((await claim(env, user.id, `weekly:${w.tool}:${w.reset_at}`)) && prefs.hit) await pushToUser(env, user.id, notice(fresh, "weekly", s, now, { tool: w.tool, w }));
   }
   // たった今リミットに当たった枠があれば「n枠目」を知らせる (過去分の取り込みでは鳴らさない)
   const justHit = added.filter((w) => now - w.hit_at < 30 * MIN).sort((a, b) => b.hit_at - a.hit_at)[0];
   if (justHit && (await claim(env, user.id, `hit:${justHit.tool}:${justHit.reset_at}`))) {
     // 目標達成も同じ通知の中で伝えるので、goal 通知は送り済みにしておく
     if (s.todayDone) await claim(env, user.id, `goal:${s.today}`);
-    if (prefs.hit) await pushToUser(env, user.id, msg.hit(justHit.tool, s, justHit));
+    if (prefs.hit) await pushToUser(env, user.id, notice(fresh, "hit", s, now, { tool: justHit.tool, w: justHit }));
   } else if (s.todayDone && prefs.goal && (await claim(env, user.id, `goal:${s.today}`))) {
-    await pushToUser(env, user.id, msg.goal(s));
+    await pushToUser(env, user.id, notice(fresh, "goal", s, now));
   }
   return json({ ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak });
 }
@@ -261,30 +272,31 @@ async function cliStart(req, env) {
 
 async function cliPoll(req, env) {
   const { deviceCode } = await req.json().catch(() => ({}));
-  const row = await env.DB.prepare("SELECT c.*, u.login FROM cli_logins c LEFT JOIN users u ON u.id = c.user_id WHERE device_code = ?").bind(deviceCode || "").first();
+  const row = await env.DB.prepare("SELECT c.*, u.login, u.lang FROM cli_logins c LEFT JOIN users u ON u.id = c.user_id WHERE device_code = ?").bind(deviceCode || "").first();
   if (!row) return json({ error: "invalid" }, 400);
   if (row.expires_at < Date.now()) return json({ error: "expired" }, 400);
   if (!row.token) return json({ pending: true });
   await env.DB.prepare("DELETE FROM cli_logins WHERE device_code = ?").bind(deviceCode).run();
-  return json({ token: row.token, login: row.login });
+  return json({ token: row.token, login: row.login, lang: row.lang });
 }
 
-async function cliVerify(req, env, user) {
+async function cliVerify(req, env, ctx) {
+  const { user, t } = ctx;
   const url = new URL(req.url);
   if (req.method === "GET") {
-    return html(pages.cliVerify(user, url.searchParams.get("code") || ""));
+    return html(pages.cliVerify(ctx, url.searchParams.get("code") || ""));
   }
-  if (!sameOrigin(req)) return html(pages.message("エラー", "不正なリクエストです"), 403);
+  if (!sameOrigin(req)) return html(pages.message(ctx, t("err.error"), t("err.forbidden")), 403);
   const form = await req.formData();
   const code = String(form.get("code") || "").toUpperCase().trim();
   const row = await env.DB.prepare("SELECT * FROM cli_logins WHERE user_code = ? AND expires_at > ? AND token IS NULL").bind(code, Date.now()).first();
-  if (!row) return html(pages.message("コードが見つかりません", "期限切れかもしれません。PC でもう一度 setup を実行してください。"), 400);
+  if (!row) return html(pages.message(ctx, t("err.code.title"), t("err.code.text")), 400);
   const token = `rw_${randomToken()}`;
   await env.DB.batch([
     env.DB.prepare("INSERT INTO cli_tokens (token_hash, user_id, platform, created_at) VALUES (?, ?, ?, ?)").bind(await sha256(token), user.id, row.platform, Date.now()),
     env.DB.prepare("UPDATE cli_logins SET user_id = ?, token = ? WHERE device_code = ?").bind(user.id, token, row.device_code),
   ]);
-  return html(pages.message("✅ PC を連携しました", "このタブは閉じて大丈夫です。ターミナルでセットアップが進み、元の画面に記録が表示されます。", user.onboarded_at ? "/me" : "/welcome", user.onboarded_at ? "ダッシュボードへ" : "セットアップに戻る", user));
+  return html(pages.message(ctx, t("cli.linked.title"), t("cli.linked.text"), user.onboarded_at ? "/me" : "/welcome", t(user.onboarded_at ? "cli.linked.toDash" : "cli.linked.toWelcome")));
 }
 
 // ---------- settings / push ----------
@@ -296,9 +308,11 @@ async function saveSettings(req, env, user) {
   const n = parseNotify(user);
   for (const k of Object.keys(n)) if (typeof b.notify?.[k] === "boolean") n[k] = b.notify[k];
   const pub = typeof b.public === "boolean" ? (b.public ? 1 : 0) : user.public;
-  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify = ?, public = ? WHERE id = ?")
-    .bind(goal, tz, remindAt, JSON.stringify(n), pub, user.id).run();
-  return json({ ok: true });
+  const lang = LANGS.includes(b.lang) ? b.lang : user.lang;
+  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify = ?, public = ?, lang = ? WHERE id = ?")
+    .bind(goal, tz, remindAt, JSON.stringify(n), pub, lang, user.id).run();
+  // 画面の言語も合わせる
+  return json({ ok: true }, 200, lang ? { "set-cookie": langCookie(lang) } : {});
 }
 
 async function subscribe(req, env, user) {
@@ -368,26 +382,26 @@ async function leaderboards(env, now = Date.now()) {
 async function runCron(env, now = Date.now()) {
   // 1) リセット通知: 直近 3分以内にリセットされた枠
   const due = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify FROM windows w JOIN users u ON u.id = w.user_id
+    `SELECT w.*, u.tz, u.goal, u.notify, u.lang FROM windows w JOIN users u ON u.id = w.user_id
      WHERE w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
   ).bind(now - 3 * MIN, now).all();
   for (const w of due.results) {
     if (!parseNotify(w).reset) continue;
     if (!(await claim(env, w.user_id, `reset:${w.tool}:${w.reset_at}`))) continue;
     const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal }, now);
-    await pushToUser(env, w.user_id, msg.reset(w.tool, s, now));
+    await pushToUser(env, w.user_id, notice(w, "reset", s, now, { tool: w.tool }));
   }
 
   // 2) 出遅れ通知: リセットから 10分たっても再開していない枠
   const late = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify FROM windows w JOIN users u ON u.id = w.user_id
+    `SELECT w.*, u.tz, u.goal, u.notify, u.lang FROM windows w JOIN users u ON u.id = w.user_id
      WHERE w.resumed_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
   ).bind(now - LATE_AFTER - 5 * MIN, now - LATE_AFTER).all();
   for (const w of late.results) {
     if (!parseNotify(w).late) continue;
     if (!(await claim(env, w.user_id, `late:${w.tool}:${w.reset_at}`))) continue;
     const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal }, now);
-    await pushToUser(env, w.user_id, msg.late(w.tool, Math.round((now - w.reset_at) / MIN), s, now));
+    await pushToUser(env, w.user_id, notice(w, "late", s, now, { tool: w.tool, minutes: Math.round((now - w.reset_at) / MIN) }));
   }
 
   // 3) ピンチ通知: 各自の remind_at (現地時刻) から 10分以内で、今日まだ目標未達
@@ -405,7 +419,7 @@ async function runCron(env, now = Date.now()) {
     // 達成済み、または週間リミット中 (今日は自動で守られる) なら催促しない
     if (s.todayDone || s.weeklyLocks.length) continue;
     if (!(await claim(env, u.id, `pinch:${day}`))) continue;
-    await pushToUser(env, u.id, msg.pinch(s));
+    await pushToUser(env, u.id, notice(u, "pinch", s, now));
   }
 
   // 古い記録の掃除 (1日 1回で十分なので 0分台だけ)
@@ -421,9 +435,10 @@ async function runCron(env, now = Date.now()) {
 // ---------- install script ----------
 function installScript(origin) {
   return `#!/bin/sh
-# ratelimit.world のセットアップ: CLI を ~/.ratelimit-world に置いてログインする
+# ratelimit.world setup: put the CLI in ~/.ratelimit-world and log in
 set -e
-command -v node >/dev/null 2>&1 || { echo "Node.js 18 以上が必要です: https://nodejs.org" >&2; exit 1; }
+case "\${LC_ALL:-\${LANG:-}}" in ja*) NEED="Node.js 18 以上が必要です" ;; *) NEED="Node.js 18 or later is required" ;; esac
+command -v node >/dev/null 2>&1 || { echo "$NEED: https://nodejs.org" >&2; exit 1; }
 mkdir -p "$HOME/.ratelimit-world"
 curl -fsSL "${origin}/cli.mjs" -o "$HOME/.ratelimit-world/ratelimit-world.mjs"
 node "$HOME/.ratelimit-world/ratelimit-world.mjs" setup --server "${origin}" < /dev/tty
@@ -443,17 +458,26 @@ async function route(req, env) {
   if (p === "/install.sh") return new Response(installScript(origin), { headers: { "content-type": "text/plain; charset=utf-8" } });
 
   if (p === "/login") {
-    if (env.DEV_LOGIN === "1" && !env.GITHUB_CLIENT_ID) return html(pages.devLogin(url.searchParams.get("next") || "/me"));
+    if (env.DEV_LOGIN === "1" && !env.GITHUB_CLIENT_ID) return html(pages.devLogin(makeCtx(req, null), url.searchParams.get("next") || "/me"));
     return githubLogin(req, env);
   }
   if (p === "/auth/github/callback") return githubCallback(req, env);
   if (p === "/dev/login" && env.DEV_LOGIN === "1") {
     const login = (url.searchParams.get("login") || "dev").replace(/[^\w-]/g, "").slice(0, 39) || "dev";
-    const user = await upsertUser(env, { login, name: login });
+    const user = await upsertUser(env, { login, name: login, lang: pickLang(req, null) });
     return startSession(env, user.id, safeNext(url.searchParams.get("next")));
   }
 
   const user = await currentUser(req, env);
+  const ctx = makeCtx(req, user);
+
+  // 言語の切り替え: cookie に覚え、ログイン中ならスマホ通知の言語も変える
+  const langSwitch = p.match(/^\/lang\/(ja|en)$/);
+  if (langSwitch) {
+    const next = url.searchParams.get("next") || "/";
+    if (user) await env.DB.prepare("UPDATE users SET lang = ? WHERE id = ?").bind(langSwitch[1], user.id).run();
+    return redirect(/^\/(?![/\\])/.test(next) ? next : "/", { "set-cookie": langCookie(langSwitch[1]) });
+  }
 
   if (p === "/logout" && m === "POST") {
     const t = getCookie(req, SESSION_COOKIE);
@@ -462,9 +486,9 @@ async function route(req, env) {
   }
 
   if (p === "/") {
-    return html(pages.landing(user, origin));
+    return html(pages.landing(ctx, origin));
   }
-  if (p === "/leaderboard") return html(pages.leaderboard(user, await leaderboards(env), url.searchParams.get("board")));
+  if (p === "/leaderboard") return html(pages.leaderboard(ctx, await leaderboards(env), url.searchParams.get("board")));
 
   const prof = p.match(/^\/@([\w-]{1,39})(\/card\.svg)?$/);
   if (prof) {
@@ -472,26 +496,28 @@ async function route(req, env) {
     const visible = u && (u.public || user?.id === u.id);
     if (prof[2]) {
       if (!visible) return new Response("not found", { status: 404 });
-      return new Response(pages.card(u, await statsFor(env, u)), { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=300" } });
+      // シェアカードは ?lang= で言語を選べる (SNS のクローラーは cookie を持たないため)
+      const cl = LANGS.includes(url.searchParams.get("lang")) ? url.searchParams.get("lang") : u.lang || ctx.lang;
+      return new Response(pages.card({ ...ctx, lang: cl, t: tr(cl) }, u, await statsFor(env, u)), { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=300" } });
     }
-    if (!visible) return html(pages.message("見つかりません", "このプロフィールは存在しないか、非公開です。"), 404);
-    return html(pages.profile(user, u, await statsFor(env, u), origin));
+    if (!visible) return html(pages.message(ctx, ctx.t("err.profile.title"), ctx.t("err.profile.text")), 404);
+    return html(pages.profile(ctx, u, await statsFor(env, u), origin));
   }
 
   // ここから先はログインが必要
   if (p === "/cli/verify") {
     if (!user) return redirect(`/login?next=${encodeURIComponent(p + url.search)}`);
-    return cliVerify(req, env, user);
+    return cliVerify(req, env, ctx);
   }
   if (p === "/welcome") {
     if (!user) return redirect("/login?next=/welcome");
-    return html(pages.welcome(user, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "" }));
+    return html(pages.welcome(ctx, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "" }));
   }
   if (p === "/me") {
     if (!user) return redirect("/login?next=/me");
     if (!user.onboarded_at) return redirect("/welcome");
     const hasCli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
-    return html(pages.dashboard(user, await statsFor(env, user), { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user) }));
+    return html(pages.dashboard(ctx, await statsFor(env, user), { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user) }));
   }
   if (p.startsWith("/api/")) {
     if (!user) return json({ error: "unauthorized" }, 401);
@@ -509,7 +535,7 @@ async function route(req, env) {
       return json({ ok: true });
     }
     if (p === "/api/push/test" && m === "POST") {
-      const n = await pushToUser(env, user.id, { title: "🔥 通知テスト", body: "リセットの瞬間にこんなふうに届くよ！", tag: "test" });
+      const n = await pushToUser(env, user.id, notice({ lang: ctx.lang }, "test", null, Date.now()));
       return json({ ok: n > 0, sent: n });
     }
   }
@@ -522,7 +548,8 @@ export default {
       const res = await route(req, env);
       if (res) return res;
       // 静的ファイル (sw.js, app.js など) は assets が先に返すので、ここに来るのは見つからないものだけ
-      return html(pages.message("ページが見つかりません", ""), 404);
+      const ctx = makeCtx(req, null);
+      return html(pages.message(ctx, ctx.t("err.notfound.title"), ""), 404);
     } catch (e) {
       console.log("error", e.stack || e.message);
       return json({ error: "internal error" }, 500);

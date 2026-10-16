@@ -1,19 +1,24 @@
-// サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js
-import { TOOL_NAME, addDays, localTime, comboXp, tierOf, WINDOW_MS } from "./logic.js";
+// サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js、文言は i18n.js。
+// 各ページは ctx = { user, lang, t, path } を受け取る (t は翻訳関数)
+import { TOOL_NAME, addDays, localTime, comboXp, WINDOW_MS } from "./logic.js";
+import { clientStrings, tierName, fmtWhen } from "./i18n.js";
 
-// 課金プランの表示名。CLI が送ってくる値 → 人が読める名前
+// 課金プランの表示名。CLI が送ってくる値 → 人が読める名前 (固有名詞なので言語で変えない)
 const PLAN_NAMES = {
-  claude: { pro: "Claude Pro", max: "Claude Max", max_5x: "Claude Max 5x", max_20x: "Claude Max 20x", team: "Claude Team", enterprise: "Claude Enterprise", unknown: "Claude（プラン不明）" },
-  codex: { free: "ChatGPT Free", plus: "ChatGPT Plus", pro: "ChatGPT Pro", team: "ChatGPT Business", business: "ChatGPT Business", enterprise: "ChatGPT Enterprise", edu: "ChatGPT Edu", unknown: "Codex（プラン不明）" },
+  claude: { pro: "Claude Pro", max: "Claude Max", max_5x: "Claude Max 5x", max_20x: "Claude Max 20x", team: "Claude Team", enterprise: "Claude Enterprise", unknown: null },
+  codex: { free: "ChatGPT Free", plus: "ChatGPT Plus", pro: "ChatGPT Pro", team: "ChatGPT Business", business: "ChatGPT Business", enterprise: "ChatGPT Enterprise", edu: "ChatGPT Edu", unknown: null },
 };
-export const planName = (tool, plan) => PLAN_NAMES[tool][plan || "unknown"] ?? `${tool === "claude" ? "Claude" : "ChatGPT"} ${plan}`;
-const planBadges = (u) => [["claude", u.claude_plan], ["codex", u.codex_plan]].filter(([, p]) => p).map(([t, p]) => `<span class="plan">${esc(planName(t, p))}</span>`).join("");
+export const planName = (ctx, tool, plan) =>
+  PLAN_NAMES[tool][plan || "unknown"] ?? (plan && plan !== "unknown" ? `${tool === "claude" ? "Claude" : "ChatGPT"} ${plan}` : ctx.t(`plan.unknown.${tool}`));
+const planBadges = (ctx, u) => [["claude", u.claude_plan], ["codex", u.codex_plan]].filter(([, p]) => p).map(([tool, p]) => `<span class="plan">${esc(planName(ctx, tool, p))}</span>`).join("");
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-function layout({ title, user, body, head = "", bodyClass = "" }) {
+function layout(ctx, { title, body, head = "", bodyClass = "" }) {
+  const { user, lang, t } = ctx;
+  const other = t("lang.other");
   return `<!doctype html>
-<html lang="ja">
+<html lang="${lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -26,36 +31,41 @@ function layout({ title, user, body, head = "", bodyClass = "" }) {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=JetBrains+Mono:wght@500;700&family=Zen+Maru+Gothic:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
+<script>window.RW_T = ${JSON.stringify(clientStrings(lang)).replace(/</g, "\\u003c")};</script>
 ${head}
 </head>
-<body class="${bodyClass}">
+<body class="${bodyClass} lang-${lang}">
 <header class="top">
   <a class="brand" href="/">ratelimit<span>.world</span></a>
   <nav>
-    <a href="/leaderboard">ランキング</a>
-    ${user ? `<a class="me" href="/me">${user.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="">` : ""}@${esc(user.login)}</a>` : `<a class="btn small" href="/login">ログイン</a>`}
+    <a href="/leaderboard">${t("nav.board")}</a>
+    ${user ? `<a class="me" href="/me">${user.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="">` : ""}@${esc(user.login)}</a>` : `<a class="btn small" href="/login">${t("nav.login")}</a>`}
   </nav>
 </header>
 <main>${body}</main>
+<footer class="foot">
+  <span class="brand-sm">ratelimit.world</span>
+  <a class="lang" href="/lang/${other}?next=${encodeURIComponent(ctx.path || "/")}" hreflang="${other}" lang="${other}">🌐 ${t("lang.switch")}</a>
+</footer>
 <script src="/app.js" defer></script>
 </body>
 </html>`;
 }
 
-export function message(title, text, href, label, user = null) {
-  return layout({
+export function message(ctx, title, text, href, label) {
+  return layout(ctx, {
     title: `${title} · ratelimit.world`,
-    user,
     body: `<section class="card narrow center"><h1 class="h2">${esc(title)}</h1><p>${esc(text)}</p>${href ? `<p><a class="btn" href="${esc(href)}">${esc(label)}</a></p>` : ""}</section>`,
   });
 }
 
-export function devLogin(next) {
-  return layout({
-    title: "開発用ログイン",
-    body: `<section class="card narrow"><h1 class="h2">開発用ログイン</h1>
-<p class="muted">GITHUB_CLIENT_ID が未設定なので、名前だけでログインします（DEV_LOGIN=1 のときだけ）。</p>
-<form action="/dev/login" method="get" class="row"><input name="login" value="dev" aria-label="ユーザー名"><input type="hidden" name="next" value="${esc(next)}"><button class="btn">ログイン</button></form></section>`,
+export function devLogin(ctx, next) {
+  const { t } = ctx;
+  return layout(ctx, {
+    title: t("dev.title"),
+    body: `<section class="card narrow"><h1 class="h2">${t("dev.title")}</h1>
+<p class="muted">${t("dev.text")}</p>
+<form action="/dev/login" method="get" class="row"><input name="login" value="dev" aria-label="${t("dev.name")}"><input type="hidden" name="next" value="${esc(next)}"><button class="btn">${t("nav.login")}</button></form></section>`,
   });
 }
 
@@ -71,75 +81,78 @@ function dayBar(starts, cls) {
   return `<div class="bar ${cls}">${blocks}</div>`;
 }
 
-export function landing(user, origin) {
-  const ticks = [0, 6, 12, 18, 24].map((h) => `<span style="left:${(h / 24) * 100}%">${h}時</span>`).join("");
-  return layout({
-    title: "ratelimit.world — 限界（レートリミット）を越えよう",
-    user,
+export function landing(ctx, origin) {
+  const { user, t } = ctx;
+  const ticks = [0, 6, 12, 18, 24].map((h) => `<span style="left:${(h / 24) * 100}%">${t("lp.hour", h)}</span>`).join("");
+  return layout(ctx, {
+    title: t("lp.title"),
     bodyClass: "landing",
     body: `
 <section class="hero">
-  <p class="eyebrow">Claude Code · Codex の 5時間枠</p>
-  <h1 class="display"><ruby>限界<rt>レートリミット</rt></ruby>を越えよう。</h1>
-  <p class="lead">5時間枠は「リセット後に最初に使った時刻」から数え直されます。再開が30分遅れると、次のリセットも30分遅れる。その遅れは1日のあいだ積み重なっていきます。</p>
+  <p class="eyebrow">${t("lp.eyebrow")}</p>
+  <h1 class="display">${t("lp.hero")}</h1>
+  <p class="lead">${t("lp.lead")}</p>
 
   <figure class="compare">
     <div class="lane">
-      <p class="lane-name">リセットと同時に再開</p>
+      <p class="lane-name">${t("lp.good")}</p>
       ${dayBar([8, 13, 18, 23], "good")}
-      <p class="lane-sum"><b>4</b> 枠</p>
+      <p class="lane-sum">${t("lane.sum", 4)}</p>
     </div>
     <div class="lane">
-      <p class="lane-name">毎回30分ずつ出遅れ</p>
+      <p class="lane-name">${t("lp.bad")}</p>
       ${dayBar([8, 13.5, 19], "bad")}
-      <p class="lane-sum"><b>3</b> 枠</p>
+      <p class="lane-sum">${t("lane.sum", 3)}</p>
     </div>
     <div class="axis">${ticks}</div>
-    <figcaption>朝8時に始めた場合。30分の出遅れが3回たまると、その日の枠が1つ消えます。</figcaption>
+    <figcaption>${t("lp.caption")}</figcaption>
   </figure>
 
   <div class="cta">
-    ${user ? `<a class="btn big" href="/me">ダッシュボードを開く</a>` : `<a class="btn big" href="/login">GitHub で始める</a>`}
-    <a class="btn ghost" href="/leaderboard">今週のランキング</a>
+    ${user ? `<a class="btn big" href="/me">${t("lp.open")}</a>` : `<a class="btn big" href="/login">${t("lp.start")}</a>`}
+    <a class="btn ghost" href="/leaderboard">${t("lp.board")}</a>
   </div>
 </section>
 
 <section class="how">
   <div class="how-item">
-    <h2 class="h3">PC では、いつもどおり使うだけ</h2>
-    <p>最初に1回だけコマンドを実行すると、Claude Code の hooks と Codex の notify に登録されます。リミットに当たった瞬間に、リセット時刻だけを送ります。プロンプトやコードは送りません。</p>
+    <h2 class="h3">${t("lp.how1.h")}</h2>
+    <p>${t("lp.how1.p")}</p>
     <pre class="cmd"><code>curl -fsSL ${esc(origin)}/install.sh | sh</code></pre>
   </div>
   <div class="how-item">
-    <h2 class="h3">リセットの瞬間に、スマホが鳴る</h2>
-    <p>通知はサーバーから送るので、PC がスリープしていても届きます。リセットから10分たっても再開していなければ、もう一度声をかけます。</p>
+    <h2 class="h3">${t("lp.how2.h")}</h2>
+    <p>${t("lp.how2.p")}</p>
   </div>
   <div class="how-item">
-    <h2 class="h3">ストリークで続ける</h2>
-    <p>目標の枠数は自分で決めます。達成した日が続くと🔥が伸び、同じ日にもう1枠重ねるごとに XP が増えていきます。7日続けるとフリーズ🧊がもらえて、うっかり休んだ日を1回だけ守ってくれます。ランキングは Claude Pro・ChatGPT Plus のように同じプランの人どうしで競います。</p>
+    <h2 class="h3">${t("lp.how3.h")}</h2>
+    <p>${t("lp.how3.p")}</p>
   </div>
 </section>`,
   });
 }
 
 // ---------- dashboard ----------
-function nextWindowText(s, now) {
-  const limited = Object.values(s.tools).map((t) => t.resetAt).sort((a, b) => a - b)[0];
-  return limited && limited > now ? ` · 次の枠は ${localTime(limited, s.tz)}〜` : " · 次の枠は今すぐ始められます";
+const nextLimited = (s) => Object.values(s.tools).map((x) => x.resetAt).sort((a, b) => a - b)[0];
+
+function nextWindowText(ctx, s, now) {
+  const limited = nextLimited(s);
+  return limited && limited > now ? ctx.t("today.nextAt", localTime(limited, s.tz)) : ctx.t("today.nextNow");
 }
 
 // 今日のトラック: 枠を 1つずつ積んでいく。先のマスにも XP を見せて、次を取りたくさせる
-function todayTrack(s, now) {
+function todayTrack(ctx, s, now) {
+  const { t } = ctx;
   const n = s.todayCount;
   // 目標までのマス + 次の1マスだけ見せる (届かない上限は見せない)
   const slots = Math.min(12, Math.max(s.goal, n) + 1);
-  const limited = Object.values(s.tools).map((t) => t.resetAt).sort((a, b) => a - b)[0];
-  const ready = Object.entries(s.lastReset).some(([, w]) => w.resumed_at == null && now - w.reset_at < 3 * 3600 * 1000);
-  const nextLabel = ready ? "今すぐ" : limited ? `${localTime(limited, s.tz)}〜` : "今すぐ";
+  const limited = nextLimited(s);
+  const ready = Object.values(s.lastReset).some((w) => w.resumed_at == null && now - w.reset_at < 3 * 3600 * 1000);
+  const nextLabel = !ready && limited ? t("slot.at", localTime(limited, s.tz)) : t("slot.now");
   let out = "";
   for (let i = 1; i <= slots; i++) {
     const w = s.todayWindows[i - 1];
-    const goalMark = i === s.goal ? ` goal` : "";
+    const goalMark = i === s.goal ? ` goal" data-goal-label="${t("slot.goal")}` : "";
     if (w) {
       out += `<li class="slot done${goalMark}" style="--i:${i}" data-n="${i}">
         <b>${i}</b><span class="tool">${w.tool === "claude" ? "Claude" : "Codex"}</span><span class="xp">+${w.xp}</span></li>`;
@@ -149,10 +162,11 @@ function todayTrack(s, now) {
       out += `<li class="slot${goalMark}" style="--i:${i}"><b>${i}</b><span class="xp">+${comboXp(i)}</span></li>`;
     }
   }
-  return `<ol class="track" aria-label="今日の枠">${out}</ol>`;
+  return `<ol class="track" aria-label="${t("today.track")}">${out}</ol>`;
 }
 
-function heatmap(s, days = 28) {
+function heatmap(ctx, s, days = 28) {
+  const { t } = ctx;
   let cells = "";
   for (let i = days - 1; i >= 0; i--) {
     const k = addDays(s.today, -i);
@@ -161,15 +175,16 @@ function heatmap(s, days = 28) {
     const frozen = s.frozenDays.includes(k);
     const locked = s.lockedDays.includes(k);
     const lvl = frozen ? "frozen" : locked ? "locked" : c === 0 ? "l0" : c < s.goal ? "l1" : c === s.goal ? "l2" : "l3";
-    const label = `${k}: ${frozen ? "フリーズで守った日" : locked ? "週間リミット中（自動で守られた日）" : `${c}枠`}${d?.weekly ? " · 🏆週間制覇" : ""}`;
-    cells += `<i class="cell ${lvl} ${i === 0 ? "today" : ""}" title="${label}" aria-label="${label}"></i>`;
+    const label = `${k}: ${frozen ? t("heat.frozen") : locked ? t("heat.locked") : t("windows", c)}${d?.weekly ? ` · ${t("heat.trophy")}` : ""}`;
+    cells += `<i class="cell ${lvl} ${i === 0 ? "today" : ""}" title="${esc(label)}" aria-label="${esc(label)}"></i>`;
   }
-  return `<div class="heat" role="img" aria-label="直近${days}日の到達回数">${cells}</div>`;
+  return `<div class="heat" role="img" aria-label="${t("heat.aria", days)}">${cells}</div>`;
 }
 
 // ツールごとの「次のリセット」ダイヤル
-function dial(tool, s, now) {
-  const t = s.tools[tool];
+function dial(ctx, tool, s, now) {
+  const { t, lang } = ctx;
+  const x = s.tools[tool];
   const last = s.lastReset[tool];
   const lock = s.weeklyLocks.find((w) => w.tool === tool);
   let state, resetAt = null, frac = 0, sub;
@@ -177,21 +192,20 @@ function dial(tool, s, now) {
     state = "weekly";
     resetAt = lock.resetAt;
     frac = 1;
-    sub = `🏆 週間リミット到達 · ${fmtDay(lock.resetAt, s.tz)} まで`;
-  } else if (t?.state === "limited") {
+    sub = t("dial.sub.weekly", fmtWhen(lang, lock.resetAt, s.tz));
+  } else if (x?.state === "limited") {
     state = "limited";
-    resetAt = t.resetAt;
-    frac = Math.min(1, Math.max(0, (t.resetAt - now) / WINDOW_MS));
-    sub = `${localTime(t.resetAt, s.tz)} にリセット`;
+    resetAt = x.resetAt;
+    frac = Math.min(1, Math.max(0, (x.resetAt - now) / WINDOW_MS));
+    sub = t("dial.sub.limited", localTime(x.resetAt, s.tz));
   } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
     state = "ready";
-    sub = `${localTime(last.reset_at, s.tz)} にリセット済み`;
+    sub = t("dial.sub.ready", localTime(last.reset_at, s.tz));
   } else {
     state = "idle";
-    sub = "リミットに当たると、ここでリセットまで数えます";
+    sub = t("dial.sub.idle");
   }
   const R = 52, C = 2 * Math.PI * R;
-  const label = { limited: "リセットまで", ready: "今すぐ再開！", idle: "待機中", weekly: "週間リセットまで" }[state];
   return `
 <article class="dial ${state}" data-tool="${tool}" ${resetAt ? `data-reset="${resetAt}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
   <h3>${TOOL_NAME[tool]}</h3>
@@ -200,201 +214,194 @@ function dial(tool, s, now) {
       <circle class="track" cx="60" cy="60" r="${R}"/>
       <circle class="fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - frac)).toFixed(1)}" data-c="${C.toFixed(1)}"/>
     </svg>
-    <div class="ring-text"><small>${label}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
+    <div class="ring-text"><small data-ready-label="${t("dial.ready")}">${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
   </div>
   <p class="dial-sub">${esc(sub)}</p>
 </article>`;
 }
 
-function fmtDay(ms, tz) {
-  return new Intl.DateTimeFormat("ja-JP", { timeZone: tz, month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
-}
-
-export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
+export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify }) {
+  const { user, t, lang } = ctx;
   const now = Date.now();
   const left = Math.max(0, s.goal - s.todayCount);
-  const n = notify;
-  const chk = (k, label) => `<label class="toggle"><input type="checkbox" name="notify.${k}" ${n[k] ? "checked" : ""}><span>${label}</span></label>`;
-  return layout({
-    title: "ダッシュボード · ratelimit.world",
-    user,
+  const chk = (k) => `<label class="toggle"><input type="checkbox" name="notify.${k}" ${notify[k] ? "checked" : ""}><span>${t(`notify.${k}`)}</span></label>`;
+  const last = user.last_sync_at ? new Date(user.last_sync_at).toLocaleString(lang === "ja" ? "ja-JP" : "en-US", { timeZone: s.tz }) : null;
+  const tier = tierName(lang, s.tier);
+  const record = s.todayIsRecord && s.todayCount > 1;
+  return layout(ctx, {
+    title: t("dash.title"),
     head: `<meta name="rw-vapid" content="${esc(vapidKey)}">`,
     bodyClass: "dash",
     body: `
-<section class="stats-row" aria-label="記録">
-  <div class="stat flame"><b>${s.streak}</b><span>日連続</span></div>
-  <div class="stat ice" title="7日続けるごとに1つ。最大2つ"><b>${s.freezes}</b><span>フリーズ</span></div>
-  <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>今週の XP</span></div>
-  ${s.trophies ? `<div class="stat trophy" title="週間リミットを使い切った回数"><b>${s.trophies}</b><span>週間制覇</span></div>` : ""}
+<section class="stats-row" aria-label="${t("dash.stats")}">
+  <div class="stat flame"><b>${s.streak}</b><span>${t("stat.streak")}</span></div>
+  <div class="stat ice" title="${t("stat.freezes.tip")}"><b>${s.freezes}</b><span>${t("stat.freezes")}</span></div>
+  <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>${t("stat.weekXp")}</span></div>
+  ${s.trophies ? `<div class="stat trophy" title="${t("stat.trophies.tip")}"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
 </section>
-${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>週間リミットを使い切りました！</b> ${s.weeklyLocks.map((w) => `${TOOL_NAME[w.tool]} は ${fmtDay(w.resetAt, s.tz)} にリセット`).join("、")}。それまで🔥ストリークは自動で守られます。</p></section>` : ""}
+${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title")}</b> ${s.weeklyLocks.map((w) => t("lock.item", w.tool, fmtWhen(lang, w.resetAt, s.tz))).join(t("lock.sep"))}${t("lock.tail")}</p></section>` : ""}
 
-<section class="card today" data-celebrate data-day="${s.today}" data-count="${s.todayCount}" data-tier="${esc(s.tier ?? "")}" data-last-xp="${s.todayWindows.at(-1)?.xp ?? 0}" data-record="${s.todayIsRecord && s.todayCount > 1 ? 1 : ""}" data-goal-hit="${s.todayCount === s.goal ? 1 : ""}">
+<section class="card today" data-celebrate data-day="${s.today}" data-count="${s.todayCount}" data-tier="${esc(tier)}" data-last-xp="${s.todayWindows.at(-1)?.xp ?? 0}" data-record="${record ? 1 : ""}" data-goal-hit="${s.todayCount === s.goal ? 1 : ""}">
   <div class="today-head">
-    <h1 class="h2">今日 <span class="num">${s.todayCount}</span><span class="unit">枠</span>${s.tier ? `<span class="tier">${esc(s.tier)}</span>` : ""}</h1>
+    <h1 class="h2">${t("today.h")} <span class="num">${s.todayCount}</span><span class="unit">${t("unit")}</span>${tier ? `<span class="tier">${esc(tier)}</span>` : ""}</h1>
     <p class="today-xp"><b>+${s.todayXp}</b> XP</p>
   </div>
-  ${todayTrack(s, now)}
+  ${todayTrack(ctx, s, now)}
   <p class="today-note">${s.todayDone
-    ? `目標の ${s.goal} 枠を達成。${s.todayCount + 1}枠目「${esc(s.nextTier)}」は <b>+${s.nextXp} XP</b>`
-    : `目標まであと <b>${left}</b> 枠${nextWindowText(s, now)}`}${s.todayIsRecord && s.todayCount > 1 ? ` · <span class="record">1日の自己ベスト更新中</span>` : s.bestDay > 0 ? ` · 自己ベスト ${s.bestDay} 枠` : ""}</p>
-  <p class="late">今日の出遅れ <b>${s.todayLateMin}</b> 分${s.quickRun > 0 ? ` · 即スタート <b>${s.quickRun}</b> 連続` : ""}</p>
+    ? t("today.done", s.goal, s.todayCount + 1, esc(tierName(lang, s.nextTier)), s.nextXp)
+    : t("today.left", left) + nextWindowText(ctx, s, now)}${record ? ` · <span class="record">${t("today.record")}</span>` : s.bestDay > 0 ? ` · ${t("today.best", s.bestDay)}` : ""}</p>
+  <p class="late">${t("today.late", s.todayLateMin)}${s.quickRun > 0 ? ` · ${t("today.quick", s.quickRun)}` : ""}</p>
 </section>
 <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
 
 <section class="dials">
-  ${dial("claude", s, now)}
-  ${dial("codex", s, now)}
+  ${dial(ctx, "claude", s, now)}
+  ${dial(ctx, "codex", s, now)}
 </section>
 
 <section class="card">
-  <h2 class="h3">直近4週間</h2>
-  ${heatmap(s)}
-  <p class="legend"><i class="cell l0"></i>0 <i class="cell l1"></i>目標未満 <i class="cell l2"></i>達成 <i class="cell l3"></i>超え <i class="cell frozen"></i>フリーズ <i class="cell locked"></i>週間リミット中</p>
+  <h2 class="h3">${t("heat.h")}</h2>
+  ${heatmap(ctx, s)}
+  <p class="legend"><i class="cell l0"></i>0 <i class="cell l1"></i>${t("legend.under")} <i class="cell l2"></i>${t("legend.met")} <i class="cell l3"></i>${t("legend.over")} <i class="cell frozen"></i>${t("legend.frozen")} <i class="cell locked"></i>${t("legend.locked")}</p>
 </section>
 
 <section class="card" id="notify">
-  <h2 class="h3">スマホに通知</h2>
-  <p class="muted" data-push-hint>iPhone の場合は、Safari の共有ボタンから「ホーム画面に追加」をして、追加したアイコンから開いてください。</p>
+  <h2 class="h3">${t("push.h")}</h2>
+  <p class="muted" data-push-hint>${t("push.ios")}</p>
   <div class="row">
-    <button class="btn" data-push-enable>この端末で通知を受け取る</button>
-    <button class="btn ghost" data-push-test hidden>テスト通知を送る</button>
+    <button class="btn" data-push-enable>${t("push.enable")}</button>
+    <button class="btn ghost" data-push-test hidden>${t("push.test")}</button>
   </div>
   <p class="status" data-push-status role="status"></p>
 </section>
 
 <section class="card ${hasCli ? "" : "attention"}" id="setup">
-  <h2 class="h3">${hasCli ? "PC の連携" : "まず PC を連携する"}</h2>
-  <p>${hasCli ? "連携済みです。別の PC を追加するときも同じコマンドを使います。" : "Claude Code や Codex を使う PC のターミナルで、1回だけ実行してください。"}</p>
-  <pre class="cmd"><code>curl -fsSL ${esc(origin)}/install.sh | sh</code><button class="copy" data-copy aria-label="コマンドをコピー">コピー</button></pre>
-  ${planBadges(user) ? `<p class="plans">検出したプラン ${planBadges(user)}</p>` : ""}
-  <p class="muted small">Node.js 18 以上が必要です。外すときは <code>node ~/.ratelimit-world/ratelimit-world.mjs uninstall</code>。最終受信: ${user.last_sync_at ? new Date(user.last_sync_at).toLocaleString("ja-JP", { timeZone: s.tz }) : "まだありません"}</p>
+  <h2 class="h3">${t(hasCli ? "setup.h.linked" : "setup.h.new")}</h2>
+  <p>${t(hasCli ? "setup.p.linked" : "setup.p.new")}</p>
+  <pre class="cmd"><code>curl -fsSL ${esc(origin)}/install.sh | sh</code><button class="copy" data-copy aria-label="${t("copy.cmd")}">${t("copy")}</button></pre>
+  ${planBadges(ctx, user) ? `<p class="plans">${t("setup.plans")} ${planBadges(ctx, user)}</p>` : ""}
+  <p class="muted small">${t("setup.note", last)}</p>
 </section>
 
 <section class="card">
-  <h2 class="h3">設定</h2>
+  <h2 class="h3">${t("settings.h")}</h2>
   <form class="settings" data-settings>
-    <label>1日の目標 <select name="goal">${[1, 2, 3, 4, 5].map((g) => `<option ${g === s.goal ? "selected" : ""}>${g}</option>`).join("")}</select> 回</label>
-    <label>ピンチ通知の時刻 <input type="time" name="remindAt" value="${esc(user.remind_at)}"></label>
-    <label>タイムゾーン <input name="tz" value="${esc(user.tz)}" list="tzs"><datalist id="tzs" data-tz-list></datalist></label>
-    <fieldset><legend>通知</legend>
-      ${chk("hit", "枠や週間リミットを使い切ったとき（+XP）")}
-      ${chk("reset", "リセットした瞬間")}
-      ${chk("late", "リセットから10分たっても再開していないとき")}
-      ${chk("pinch", "ピンチ（指定時刻に目標未達）")}
-      ${chk("goal", "目標達成")}
+    <label>${t("settings.goal")} <select name="goal">${[1, 2, 3, 4, 5].map((g) => `<option ${g === s.goal ? "selected" : ""}>${g}</option>`).join("")}</select> ${t("settings.goal.unit")}</label>
+    <label>${t("settings.remind")} <input type="time" name="remindAt" value="${esc(user.remind_at)}"></label>
+    <label>${t("settings.tz")} <input name="tz" value="${esc(user.tz)}" list="tzs"><datalist id="tzs" data-tz-list></datalist></label>
+    <label>${t("settings.lang")} <select name="lang"><option value="ja" ${lang === "ja" ? "selected" : ""}>日本語</option><option value="en" ${lang === "en" ? "selected" : ""}>English</option></select></label>
+    <fieldset><legend>${t("settings.notify")}</legend>
+      ${chk("hit")}
+      ${chk("reset")}
+      ${chk("late")}
+      ${chk("pinch")}
+      ${chk("goal")}
     </fieldset>
-    <label class="toggle"><input type="checkbox" name="public" ${user.public ? "checked" : ""}><span>プロフィールを公開してランキングに参加する</span></label>
-    <div class="row"><button class="btn">設定を保存</button><span class="status" data-settings-status role="status"></span></div>
+    <label class="toggle"><input type="checkbox" name="public" ${user.public ? "checked" : ""}><span>${t("settings.public")}</span></label>
+    <div class="row"><button class="btn">${t("settings.save")}</button><span class="status" data-settings-status role="status"></span></div>
   </form>
 </section>
 
 <section class="row share">
-  <a class="btn ghost" href="/@${esc(user.login)}">公開プロフィール</a>
-  <form method="post" action="/logout"><button class="btn ghost">ログアウト</button></form>
+  <a class="btn ghost" href="/@${esc(user.login)}">${t("dash.profile")}</a>
+  <form method="post" action="/logout"><button class="btn ghost">${t("dash.logout")}</button></form>
 </section>`,
   });
 }
 
 // ---------- onboarding ----------
-const GOALS = [
-  [1, "毎日1枠", "まずは続けることから"],
-  [2, "毎日2枠", "朝と夜で1枠ずつ"],
-  [3, "毎日3枠", "1日しっかり回す"],
-  [4, "毎日4枠", "ほぼ一日中"],
-];
-
-export function welcome(user, { origin, vapidKey }) {
+export function welcome(ctx, { origin, vapidKey }) {
+  const { user, t } = ctx;
   const cmd = `curl -fsSL ${origin}/install.sh | sh`;
-  return layout({
-    title: "ようこそ · ratelimit.world",
-    user,
+  return layout(ctx, {
+    title: t("wel.title"),
     head: `<meta name="rw-vapid" content="${esc(vapidKey)}">`,
     bodyClass: "welcome-page",
     body: `
 <section class="welcome" data-welcome data-goal="${user.goal}">
-  <ol class="steps" aria-label="セットアップの進み具合"><li class="on">PC を連携</li><li>目標</li><li>通知</li></ol>
+  <ol class="steps" aria-label="${t("wel.steps")}"><li class="on">${t("wel.step1")}</li><li>${t("wel.step2")}</li><li>${t("wel.step3")}</li></ol>
 
   <div class="step" data-step="1">
-    <p class="eyebrow">ようこそ、@${esc(user.login)}</p>
-    <h1 class="h1">まず、PC を連携しよう</h1>
-    <p>Claude Code や Codex を使っている PC のターミナルに貼りつけて、実行してください。ブラウザが開いたら「連携する」を押すだけです。</p>
-    <pre class="cmd"><code>${esc(cmd)}</code><button class="copy" data-copy aria-label="コマンドをコピー">コピー</button></pre>
-    <p class="waiting" data-link-wait><i class="dot"></i>PC からの連絡を待っています…</p>
+    <p class="eyebrow">${esc(t("wel.hello", user.login))}</p>
+    <h1 class="h1">${t("wel.link.h")}</h1>
+    <p>${t("wel.link.p")}</p>
+    <pre class="cmd"><code>${esc(cmd)}</code><button class="copy" data-copy aria-label="${t("copy.cmd")}">${t("copy")}</button></pre>
+    <p class="waiting" data-link-wait><i class="dot"></i>${t("wel.wait")}</p>
     <div class="reveal" data-link-done hidden>
-      <p class="reveal-title">✅ 連携できた！</p>
+      <p class="reveal-title">${t("wel.done")}</p>
       <div class="reveal-stats">
-        <div><b data-h="total">0</b><span>過去60日で使い切った枠</span></div>
-        <div><b data-h="avgLateMin">—</b><span>リセットからの平均の出遅れ（分）</span></div>
-        <div><b data-h="bestDay">0</b><span>1日の最多枠</span></div>
+        <div><b data-h="total">0</b><span>${t("wel.total")}</span></div>
+        <div><b data-h="avgLateMin">—</b><span>${t("wel.avgLate")}</span></div>
+        <div><b data-h="bestDay">0</b><span>${t("wel.bestDay")}</span></div>
       </div>
       <p class="reveal-msg" data-h="message"></p>
-      <button class="btn big" data-next="2">目標を決める</button>
+      <button class="btn big" data-next="2">${t("wel.toGoal")}</button>
     </div>
-    <p class="skip"><button class="link" data-next="2">あとで連携する</button></p>
+    <p class="skip"><button class="link" data-next="2">${t("wel.later")}</button></p>
   </div>
 
   <div class="step" data-step="2" hidden>
-    <h1 class="h1">1日に何枠、使い切る？</h1>
-    <p data-suggest>目標の枠数を使い切った日が続くと、🔥ストリークが伸びます。無理のない数から始めて、慣れたら上げましょう。</p>
+    <h1 class="h1">${t("wel.goal.h")}</h1>
+    <p data-suggest>${t("wel.goal.p")}</p>
     <div class="goals">
-      ${GOALS.map(([g, name, desc]) => `<button class="goal-card" data-goal-pick="${g}">
-        <span class="goal-n">${g}<small>枠</small></span><span class="goal-name">${name}</span><span class="goal-desc">${desc}</span></button>`).join("")}
+      ${[1, 2, 3, 4].map((g) => `<button class="goal-card" data-goal-pick="${g}">
+        <span class="goal-n">${g}<small>${t("unit")}</small></span><span class="goal-name">${t(`goal.${g}.name`)}</span><span class="goal-desc">${t(`goal.${g}.desc`)}</span></button>`).join("")}
     </div>
-    <p class="muted small">あとから設定でいつでも変えられます。</p>
+    <p class="muted small">${t("wel.goal.note")}</p>
   </div>
 
   <div class="step" data-step="3" hidden>
-    <h1 class="h1">リセットの瞬間に、スマホを鳴らす</h1>
-    <p>このサービスの本体です。リセットした瞬間、枠を使い切った瞬間、出遅れているときに知らせます。</p>
-    <p class="muted" data-push-hint>iPhone の場合は、Safari の共有ボタンから「ホーム画面に追加」をして、追加したアイコンから開いてください。</p>
+    <h1 class="h1">${t("wel.push.h")}</h1>
+    <p>${t("wel.push.p")}</p>
+    <p class="muted" data-push-hint>${t("push.ios")}</p>
     <div class="row">
-      <button class="btn big" data-push-enable>この端末で通知を受け取る</button>
-      <button class="btn ghost" data-push-test hidden>テスト通知を送る</button>
+      <button class="btn big" data-push-enable>${t("push.enable")}</button>
+      <button class="btn ghost" data-push-test hidden>${t("push.test")}</button>
     </div>
     <p class="status" data-push-status role="status"></p>
-    <p><button class="btn ghost" data-finish>はじめる</button> <button class="link" data-finish>通知はあとで</button></p>
+    <p><button class="btn ghost" data-finish>${t("wel.finish")}</button> <button class="link" data-finish>${t("wel.skipPush")}</button></p>
   </div>
 </section>`,
   });
 }
 
 // ---------- profile / leaderboard ----------
-export function profile(viewer, u, s, origin) {
+export function profile(ctx, u, s, origin) {
+  const { t, lang } = ctx;
   const url = `${origin}/@${u.login}`;
-  const text = `🔥${s.streak}日連続でAIのレートリミットを使い切っています`;
-  return layout({
+  const tier = tierName(lang, s.tier);
+  return layout(ctx, {
     title: `@${u.login} · ratelimit.world`,
-    user: viewer,
-    head: `<meta property="og:title" content="@${esc(u.login)} — 🔥${s.streak}日連続"><meta property="og:description" content="今日 ${s.todayCount}/${s.goal} 回 · 今週 ${s.weekXp} XP"><meta property="og:image" content="${esc(url)}/card.svg"><meta name="twitter:card" content="summary_large_image">`,
+    head: `<meta property="og:title" content="${esc(t("prof.ogTitle", u.login, s.streak))}"><meta property="og:description" content="${esc(t("prof.ogDesc", s.todayCount, s.goal, s.weekXp))}"><meta property="og:image" content="${esc(url)}/card.svg?lang=${lang}"><meta name="twitter:card" content="summary_large_image">`,
     body: `
 <section class="profile-head">
   ${u.avatar_url ? `<img class="avatar" src="${esc(u.avatar_url)}" alt="">` : ""}
-  <div><h1 class="h2">@${esc(u.login)}</h1>${u.name && u.name !== u.login ? `<p class="muted">${esc(u.name)}</p>` : ""}<p class="plans">${planBadges(u)}</p></div>
+  <div><h1 class="h2">@${esc(u.login)}</h1>${u.name && u.name !== u.login ? `<p class="muted">${esc(u.name)}</p>` : ""}<p class="plans">${planBadges(ctx, u)}</p></div>
 </section>
 <section class="stats-row">
-  <div class="stat flame"><b>${s.streak}</b><span>日連続</span></div>
-  <div class="stat"><b>${s.bestStreak}</b><span>最長</span></div>
-  <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>今週の XP</span></div>
-  <div class="stat"><b>${s.total}</b><span>使い切った枠</span></div>
-  ${s.trophies ? `<div class="stat trophy"><b>${s.trophies}</b><span>週間制覇</span></div>` : ""}
+  <div class="stat flame"><b>${s.streak}</b><span>${t("stat.streak")}</span></div>
+  <div class="stat"><b>${s.bestStreak}</b><span>${t("stat.best")}</span></div>
+  <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>${t("stat.weekXp")}</span></div>
+  <div class="stat"><b>${s.total}</b><span>${t("stat.total")}</span></div>
+  ${s.trophies ? `<div class="stat trophy"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
 </section>
 <section class="card">
-  <h2 class="h3">今日 ${s.todayCount} 枠${s.tier ? ` <span class="tier">${esc(s.tier)}</span>` : ""}</h2>
-  ${todayTrack(s, Date.now())}
-  ${heatmap(s)}
+  <h2 class="h3">${t("prof.today", s.todayCount)}${tier ? ` <span class="tier">${esc(tier)}</span>` : ""}</h2>
+  ${todayTrack(ctx, s, Date.now())}
+  ${heatmap(ctx, s)}
 </section>
 <section class="card share-card">
-  <img src="/@${esc(u.login)}/card.svg" alt="@${esc(u.login)} の記録カード" width="600" height="315">
+  <img src="/@${esc(u.login)}/card.svg?lang=${lang}" alt="${esc(t("prof.cardAlt", u.login))}" width="600" height="315">
   <div class="row">
-    <a class="btn" target="_blank" rel="noopener" href="https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}">X でシェア</a>
-    <button class="btn ghost" data-copy-text="${esc(url)}">リンクをコピー</button>
+    <a class="btn" target="_blank" rel="noopener" href="https://x.com/intent/post?text=${encodeURIComponent(t("prof.shareText", s.streak))}&url=${encodeURIComponent(url)}">${t("prof.shareX")}</a>
+    <button class="btn ghost" data-copy-text="${esc(url)}">${t("prof.copyLink")}</button>
   </div>
 </section>`,
   });
 }
 
-export function leaderboard(viewer, boards, selected) {
+export function leaderboard(ctx, boards, selected) {
+  const { user: viewer, t } = ctx;
   const order = (k) => {
     const [tool, plan] = k.split(":");
     const ps = Object.keys(PLAN_NAMES[tool]);
@@ -404,45 +411,45 @@ export function leaderboard(viewer, boards, selected) {
   // 見ている人自身のプランのボードを最初に開く
   const mine = viewer ? keys.find((k) => k === `claude:${viewer.claude_plan}` || k === `codex:${viewer.codex_plan}`) : null;
   const cur = keys.includes(selected) ? selected : mine ?? keys[0];
-  const name = (k) => { const [t, p] = k.split(":"); return planName(t, p); };
+  const name = (k) => { const [tool, p] = k.split(":"); return planName(ctx, tool, p); };
   const rows = boards[cur] ?? [];
   const tabs = keys.map((k) => `<a class="tab ${k === cur ? "on" : ""}" href="/leaderboard?board=${encodeURIComponent(k)}" ${k === cur ? 'aria-current="page"' : ""}>${esc(name(k))} <small>${boards[k].length}</small></a>`).join("");
   const list = rows.length
-    ? rows.map((r, i) => `<li class="${viewer?.id === r.id ? "you" : ""}"><span class="rank">${i + 1}</span>${r.avatar_url ? `<img src="${esc(r.avatar_url)}" alt="">` : `<span class="noav"></span>`}<a href="/@${esc(r.login)}">@${esc(r.login)}</a><span class="fl">${r.weekWindows}枠</span><b>${r.weekXp.toLocaleString()} XP</b></li>`).join("")
-    : `<li class="empty">今週はまだ誰もいません。最初の1枠を使い切りましょう。</li>`;
-  return layout({
-    title: "今週のランキング · ratelimit.world",
-    user: viewer,
-    body: `<section class="card"><h1 class="h2">今週のランキング</h1>
-<p class="muted">プランごとに 1枠の大きさが違うので、同じプランの人どうしで競います。月曜 0時（各自のタイムゾーン）からの XP で、そのツールの枠だけを数えます。</p>
-${keys.length ? `<nav class="tabs" aria-label="プラン">${tabs}</nav>` : ""}
+    ? rows.map((r, i) => `<li class="${viewer?.id === r.id ? "you" : ""}"><span class="rank">${i + 1}</span>${r.avatar_url ? `<img src="${esc(r.avatar_url)}" alt="">` : `<span class="noav"></span>`}<a href="/@${esc(r.login)}">@${esc(r.login)}</a><span class="fl">${t("windows", r.weekWindows)}</span><b>${r.weekXp.toLocaleString()} XP</b></li>`).join("")
+    : `<li class="empty">${t("board.empty")}</li>`;
+  return layout(ctx, {
+    title: t("board.title"),
+    body: `<section class="card"><h1 class="h2">${t("board.h")}</h1>
+<p class="muted">${t("board.p")}</p>
+${keys.length ? `<nav class="tabs" aria-label="${t("board.plans")}">${tabs}</nav>` : ""}
 <ol class="board">${list}</ol></section>`,
   });
 }
 
-export function cliVerify(user, code) {
-  return layout({
-    title: "PC を連携 · ratelimit.world",
-    user,
+export function cliVerify(ctx, code) {
+  const { user, t } = ctx;
+  return layout(ctx, {
+    title: t("verify.title"),
     body: `<section class="card narrow center">
-<h1 class="h2">この PC を連携しますか？</h1>
-<p>ターミナルに表示されたコードと同じか確認してください。</p>
+<h1 class="h2">${t("verify.h")}</h1>
+<p>${t("verify.p")}</p>
 <form method="post" action="/cli/verify">
-  <input class="code" name="code" value="${esc(code)}" aria-label="確認コード" autocomplete="off">
-  <p><button class="btn big">@${esc(user.login)} として連携する</button></p>
+  <input class="code" name="code" value="${esc(code)}" aria-label="${t("verify.code")}" autocomplete="off">
+  <p><button class="btn big">${esc(t("verify.btn", user.login))}</button></p>
 </form>
-<p class="muted small">連携すると、その PC から「リミット到達とリセットの時刻」だけが送られます。</p>
+<p class="muted small">${t("verify.note")}</p>
 </section>`,
   });
 }
 
 // ---------- share card (SVG 1200x630) ----------
-export function card(u, s) {
+export function card(ctx, u, s) {
+  const { t } = ctx;
   const days = [];
   for (let i = 13; i >= 0; i--) {
     const k = addDays(s.today, -i);
     const c = s.days[k]?.count ?? 0;
-    const fill = s.frozenDays.includes(k) ? "#7FD8F5" : c === 0 ? "#2E2A5C" : c < s.goal ? "#8F84FF" : "#FF7A1A";
+    const fill = s.frozenDays.includes(k) ? "#7FD8F5" : s.lockedDays.includes(k) ? "#E8B931" : c === 0 ? "#2E2A5C" : c < s.goal ? "#8F84FF" : "#FF7A1A";
     days.push(`<rect x="${80 + (13 - i) * 74}" y="470" width="62" height="62" rx="14" fill="${fill}"/>`);
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
@@ -451,8 +458,8 @@ export function card(u, s) {
 <text x="80" y="110" fill="#B9B3FF" font-family="Helvetica, Arial, sans-serif" font-size="34" font-weight="700">ratelimit.world</text>
 <text x="80" y="170" fill="#FFFFFF" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="700">@${esc(u.login)}</text>
 <text x="72" y="380" fill="#FF7A1A" font-family="Helvetica, Arial, sans-serif" font-size="210" font-weight="900">${s.streak}</text>
-<text x="${90 + String(s.streak).length * 118}" y="380" fill="#FFFFFF" font-family="Hiragino Sans, Noto Sans JP, sans-serif" font-size="64" font-weight="800">日連続</text>
-<text x="80" y="440" fill="#B9B3FF" font-family="Hiragino Sans, Noto Sans JP, sans-serif" font-size="30">5時間枠を使い切った日 · 今週 ${s.weekXp.toLocaleString()} XP · 最長 ${s.bestStreak} 日</text>
+<text x="${90 + String(s.streak).length * 118}" y="380" fill="#FFFFFF" font-family="Hiragino Sans, Noto Sans JP, Helvetica, sans-serif" font-size="64" font-weight="800">${esc(t("card.streak"))}</text>
+<text x="80" y="440" fill="#B9B3FF" font-family="Hiragino Sans, Noto Sans JP, Helvetica, sans-serif" font-size="30">${esc(t("card.sub", s.weekXp.toLocaleString(), s.bestStreak))}</text>
 ${days.join("")}
 </svg>`;
 }

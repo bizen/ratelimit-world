@@ -1,0 +1,558 @@
+// 文言はすべてここに置く (日本語 / 英語)。値は文字列か、引数を受けて文字列を返す関数。
+// ブラウザ側で使う文言は CLIENT_KEYS に並べ、{n} のような置き換えで使う。
+
+export const LANGS = ["ja", "en"];
+
+// 言語の決め方: 画面で選んだもの (cookie) → ユーザーに保存したもの → ブラウザの言語設定
+export function pickLang(req, user) {
+  const c = (req.headers.get("cookie") || "").match(/(?:^|;\s*)rw_lang=(ja|en)/);
+  if (c) return c[1];
+  if (user?.lang && LANGS.includes(user.lang)) return user.lang;
+  return /^ja\b/i.test(req.headers.get("accept-language") || "") ? "ja" : "en";
+}
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const win = (n) => plural(n, "window", "windows");
+
+const TOOL = { claude: "Claude Code", codex: "Codex" };
+
+export const T = {
+  ja: {
+    // 共通
+    "nav.board": "ランキング",
+    "nav.login": "ログイン",
+    "lang.switch": "English",
+    "lang.other": "en",
+    copy: "コピー",
+    "copy.done": "コピーしました",
+    "copy.cmd": "コマンドをコピー",
+    unit: "枠",
+    windows: (n) => `${n}枠`,
+    "plan.unknown.claude": "Claude（プラン不明）",
+    "plan.unknown.codex": "Codex（プラン不明）",
+
+    // サーバーからのメッセージ
+    "err.login.title": "ログインに失敗しました",
+    "err.login.retry": "もう一度お試しください。",
+    "err.login.token": "GitHub から認証情報を受け取れませんでした。",
+    "err.login.user": "GitHub のユーザー情報を取得できませんでした。",
+    "err.forbidden": "不正なリクエストです",
+    "err.error": "エラー",
+    "err.code.title": "コードが見つかりません",
+    "err.code.text": "期限切れかもしれません。PC でもう一度 setup を実行してください。",
+    "err.notfound.title": "ページが見つかりません",
+    "err.profile.title": "見つかりません",
+    "err.profile.text": "このプロフィールは存在しないか、非公開です。",
+    "cli.linked.title": "✅ PC を連携しました",
+    "cli.linked.text": "このタブは閉じて大丈夫です。ターミナルでセットアップが進み、元の画面に記録が表示されます。",
+    "cli.linked.toDash": "ダッシュボードへ",
+    "cli.linked.toWelcome": "セットアップに戻る",
+    "dev.title": "開発用ログイン",
+    "dev.text": "GITHUB_CLIENT_ID が未設定なので、名前だけでログインします（DEV_LOGIN=1 のときだけ）。",
+    "dev.name": "ユーザー名",
+
+    // LP
+    "lp.title": "ratelimit.world — 限界（レートリミット）を越えよう",
+    "lp.eyebrow": "Claude Code · Codex の 5時間枠",
+    "lp.hero": "限界（レートリミット）を<br>越えよう。",
+    "lp.lead": "5時間枠は「リセット後に最初に使った時刻」から数え直されます。再開が30分遅れると、次のリセットも30分遅れる。その遅れは1日のあいだ積み重なっていきます。",
+    "lp.good": "リセットと同時に再開",
+    "lp.bad": "毎回30分ずつ出遅れ",
+    "lp.hour": (h) => `${h}時`,
+    "lane.sum": (n) => `<b>${n}</b> 枠`,
+    "lp.caption": "朝8時に始めた場合。30分の出遅れが3回たまると、その日の枠が1つ消えます。",
+    "lp.open": "ダッシュボードを開く",
+    "lp.start": "GitHub で始める",
+    "lp.board": "今週のランキング",
+    "lp.how1.h": "PC では、いつもどおり使うだけ",
+    "lp.how1.p": "最初に1回だけコマンドを実行すると、Claude Code の hooks と Codex の notify に登録されます。リミットに当たった瞬間に、リセット時刻だけを送ります。プロンプトやコードは送りません。",
+    "lp.how2.h": "リセットの瞬間に、スマホが鳴る",
+    "lp.how2.p": "通知はサーバーから送るので、PC がスリープしていても届きます。リセットから10分たっても再開していなければ、もう一度声をかけます。",
+    "lp.how3.h": "ストリークで続ける",
+    "lp.how3.p": "目標の枠数は自分で決めます。達成した日が続くと🔥が伸び、同じ日にもう1枠重ねるごとに XP が増えていきます。7日続けるとフリーズ🧊がもらえて、うっかり休んだ日を1回だけ守ってくれます。ランキングは Claude Pro・ChatGPT Plus のように同じプランの人どうしで競います。",
+
+    // ダッシュボード
+    "dash.title": "ダッシュボード · ratelimit.world",
+    "dash.stats": "記録",
+    "stat.streak": "日連続",
+    "stat.freezes": "フリーズ",
+    "stat.freezes.tip": "7日続けるごとに1つ。最大2つ",
+    "stat.weekXp": "今週の XP",
+    "stat.trophies": "週間制覇",
+    "stat.trophies.tip": "週間リミットを使い切った回数",
+    "stat.best": "最長",
+    "stat.total": "使い切った枠",
+    "lock.title": "週間リミットを使い切りました！",
+    "lock.item": (tool, when) => `${TOOL[tool]} は ${when} にリセット`,
+    "lock.sep": "、",
+    "lock.tail": "。それまで🔥ストリークは自動で守られます。",
+    "today.h": "今日",
+    "today.track": "今日の枠",
+    "today.done": (goal, next, tier, xp) => `目標の ${goal} 枠を達成。${next}枠目「${tier}」は <b>+${xp} XP</b>`,
+    "today.left": (left) => `目標まであと <b>${left}</b> 枠`,
+    "today.nextAt": (t) => ` · 次の枠は ${t}〜`,
+    "today.nextNow": " · 次の枠は今すぐ始められます",
+    "today.record": "1日の自己ベスト更新中",
+    "today.best": (n) => `自己ベスト ${n} 枠`,
+    "today.late": (m) => `今日の出遅れ <b>${m}</b> 分`,
+    "today.quick": (n) => `即スタート <b>${n}</b> 連続`,
+    "slot.now": "今すぐ",
+    "slot.at": (t) => `${t}〜`,
+    "slot.goal": "目標",
+    "dial.limited": "リセットまで",
+    "dial.ready": "今すぐ再開！",
+    "dial.idle": "待機中",
+    "dial.weekly": "週間リセットまで",
+    "dial.sub.weekly": (when) => `🏆 週間リミット到達 · ${when} まで`,
+    "dial.sub.limited": (t) => `${t} にリセット`,
+    "dial.sub.ready": (t) => `${t} にリセット済み`,
+    "dial.sub.idle": "リミットに当たると、ここでリセットまで数えます",
+    "heat.h": "直近4週間",
+    "heat.aria": (n) => `直近${n}日の到達回数`,
+    "heat.frozen": "フリーズで守った日",
+    "heat.locked": "週間リミット中（自動で守られた日）",
+    "heat.trophy": "🏆週間制覇",
+    "legend.under": "目標未満",
+    "legend.met": "達成",
+    "legend.over": "超え",
+    "legend.frozen": "フリーズ",
+    "legend.locked": "週間リミット中",
+    "push.h": "スマホに通知",
+    "push.ios": "iPhone の場合は、Safari の共有ボタンから「ホーム画面に追加」をして、追加したアイコンから開いてください。",
+    "push.enable": "この端末で通知を受け取る",
+    "push.test": "テスト通知を送る",
+    "setup.h.linked": "PC の連携",
+    "setup.h.new": "まず PC を連携する",
+    "setup.p.linked": "連携済みです。別の PC を追加するときも同じコマンドを使います。",
+    "setup.p.new": "Claude Code や Codex を使う PC のターミナルで、1回だけ実行してください。",
+    "setup.plans": "検出したプラン",
+    "setup.note": (last) => `Node.js 18 以上が必要です。外すときは <code>node ~/.ratelimit-world/ratelimit-world.mjs uninstall</code>。最終受信: ${last ?? "まだありません"}`,
+    "settings.h": "設定",
+    "settings.goal": "1日の目標",
+    "settings.goal.unit": "枠",
+    "settings.remind": "ピンチ通知の時刻",
+    "settings.tz": "タイムゾーン",
+    "settings.lang": "言語",
+    "settings.notify": "通知",
+    "notify.hit": "枠や週間リミットを使い切ったとき（+XP）",
+    "notify.reset": "リセットした瞬間",
+    "notify.late": "リセットから10分たっても再開していないとき",
+    "notify.pinch": "ピンチ（指定時刻に目標未達）",
+    "notify.goal": "目標達成",
+    "settings.public": "プロフィールを公開してランキングに参加する",
+    "settings.save": "設定を保存",
+    "dash.profile": "公開プロフィール",
+    "dash.logout": "ログアウト",
+
+    // オンボーディング
+    "wel.title": "ようこそ · ratelimit.world",
+    "wel.steps": "セットアップの進み具合",
+    "wel.step1": "PC を連携",
+    "wel.step2": "目標",
+    "wel.step3": "通知",
+    "wel.hello": (login) => `ようこそ、@${login}`,
+    "wel.link.h": "まず、PC を連携しよう",
+    "wel.link.p": "Claude Code や Codex を使っている PC のターミナルに貼りつけて、実行してください。ブラウザが開いたら「連携する」を押すだけです。",
+    "wel.wait": "PC からの連絡を待っています…",
+    "wel.done": "✅ 連携できた！",
+    "wel.total": "過去60日で使い切った枠",
+    "wel.avgLate": "リセットからの平均の出遅れ（分）",
+    "wel.bestDay": "1日の最多枠",
+    "wel.toGoal": "目標を決める",
+    "wel.later": "あとで連携する",
+    "wel.goal.h": "1日に何枠、使い切る？",
+    "wel.goal.p": "目標の枠数を使い切った日が続くと、🔥ストリークが伸びます。無理のない数から始めて、慣れたら上げましょう。",
+    "wel.goal.note": "あとから設定でいつでも変えられます。",
+    "goal.1.name": "毎日1枠", "goal.1.desc": "まずは続けることから",
+    "goal.2.name": "毎日2枠", "goal.2.desc": "朝と夜で1枠ずつ",
+    "goal.3.name": "毎日3枠", "goal.3.desc": "1日しっかり回す",
+    "goal.4.name": "毎日4枠", "goal.4.desc": "ほぼ一日中",
+    "wel.push.h": "リセットの瞬間に、スマホを鳴らす",
+    "wel.push.p": "このサービスの本体です。リセットした瞬間、枠を使い切った瞬間、出遅れているときに知らせます。",
+    "wel.finish": "はじめる",
+    "wel.skipPush": "通知はあとで",
+
+    // プロフィール・ランキング
+    "prof.shareText": (n) => `🔥${n}日連続でAIのレートリミットを使い切っています`,
+    "prof.ogTitle": (login, n) => `@${login} — 🔥${n}日連続`,
+    "prof.ogDesc": (c, g, xp) => `今日 ${c}/${g} 枠 · 今週 ${xp} XP`,
+    "prof.today": (n) => `今日 ${n} 枠`,
+    "prof.cardAlt": (login) => `@${login} の記録カード`,
+    "prof.shareX": "X でシェア",
+    "prof.copyLink": "リンクをコピー",
+    "board.title": "今週のランキング · ratelimit.world",
+    "board.h": "今週のランキング",
+    "board.p": "プランごとに 1枠の大きさが違うので、同じプランの人どうしで競います。月曜 0時（各自のタイムゾーン）からの XP で、そのツールの枠だけを数えます。",
+    "board.plans": "プラン",
+    "board.empty": "今週はまだ誰もいません。最初の1枠を使い切りましょう。",
+    "verify.title": "PC を連携 · ratelimit.world",
+    "verify.h": "この PC を連携しますか？",
+    "verify.p": "ターミナルに表示されたコードと同じか確認してください。",
+    "verify.code": "確認コード",
+    "verify.btn": (login) => `@${login} として連携する`,
+    "verify.note": "連携すると、その PC から「リミット到達とリセットの時刻」だけが送られます。",
+
+    // シェアカード (SVG)
+    "card.streak": "日連続",
+    "card.sub": (xp, best) => `5時間枠を使い切った日 · 今週 ${xp} XP · 最長 ${best} 日`,
+
+    // 称号 (自分の目標が基準)
+    "tier.left": (n) => `あと${n}枠`,
+    "tier.goal": "目標達成",
+    "tier.over": "目標超え",
+    "tier.beyond": "限界突破",
+
+    // ブラウザ側 (app.js) で使う文言。{n} などを置き換える
+    "c.ready": "今すぐ再開！",
+    "c.copied": "コピーしました",
+    "c.saved": "保存しました",
+    "c.saveFailed": "保存できませんでした。もう一度お試しください",
+    "c.lateNow": "{n}分 出遅れ中",
+    "c.days": "{d}日 {h}時間",
+    "c.pushOff": "この端末の通知を止める",
+    "c.pushOn": "この端末で通知を受け取る",
+    "c.pushUnsupported": "このブラウザは通知に対応していません。",
+    "c.pushNoKey": "サーバーの通知設定（VAPID 鍵）がまだありません。",
+    "c.pushStopped": "この端末への通知を止めました",
+    "c.pushDenied": "通知が許可されませんでした。ブラウザの設定から許可してください",
+    "c.pushReady": "通知を受け取れるようになりました。テスト通知で確認できます",
+    "c.pushFailed": "通知を登録できませんでした ({e})",
+    "c.testSent": "テスト通知を送りました",
+    "c.testFailed": "送れませんでした。通知をいったん止めて、もう一度受け取る設定にしてください",
+    "c.toast": "<b>{n}枠目「{tier}」</b> +{xp} XP",
+    "c.toastGoal": "🔥 今日の目標達成！",
+    "c.toastRecord": "1日の自己ベスト更新！",
+    "c.revealEmpty": "まだ記録はありません。最初の1枠を使い切ったら、ここから🔥が始まります。",
+    "c.revealLost": "リセットに気づかず、合計 {lost} を取りこぼしていました。これをゼロにしよう。",
+    "c.revealGood": "すでにいいペース。ここから毎日積み上げよう。",
+    "c.hm": "{h}時間{m}分",
+    "c.m": "{m}分",
+    "c.recommend": "おすすめ",
+    "c.suggest": "あなたのふだんの1日は {typical} 枠、最多は {best} 枠でした。まずはふだんどおりの数から始めて、続けられたら上げましょう。",
+  },
+
+  en: {
+    "nav.board": "Leaderboard",
+    "nav.login": "Log in",
+    "lang.switch": "日本語",
+    "lang.other": "ja",
+    copy: "Copy",
+    "copy.done": "Copied",
+    "copy.cmd": "Copy command",
+    unit: "",
+    windows: (n) => win(n),
+    "plan.unknown.claude": "Claude (unknown plan)",
+    "plan.unknown.codex": "Codex (unknown plan)",
+
+    "err.login.title": "Login failed",
+    "err.login.retry": "Please try again.",
+    "err.login.token": "GitHub did not return credentials.",
+    "err.login.user": "Could not read your GitHub profile.",
+    "err.forbidden": "This request is not allowed.",
+    "err.error": "Error",
+    "err.code.title": "Code not found",
+    "err.code.text": "It may have expired. Run setup on your computer again.",
+    "err.notfound.title": "Page not found",
+    "err.profile.title": "Not found",
+    "err.profile.text": "This profile does not exist or is private.",
+    "cli.linked.title": "✅ Computer linked",
+    "cli.linked.text": "You can close this tab. Setup continues in your terminal, and your history will appear on the previous page.",
+    "cli.linked.toDash": "Go to dashboard",
+    "cli.linked.toWelcome": "Back to setup",
+    "dev.title": "Developer login",
+    "dev.text": "GITHUB_CLIENT_ID is not set, so you log in with a name only (DEV_LOGIN=1 only).",
+    "dev.name": "Username",
+
+    "lp.title": "ratelimit.world — Push past your (rate) limit",
+    "lp.eyebrow": "5-hour windows of Claude Code · Codex",
+    "lp.hero": "Push past your (rate) limit.",
+    "lp.lead": "A 5-hour window starts counting from the first request after a reset. Come back 30 minutes late, and your next reset moves 30 minutes later too. Those delays add up over the day.",
+    "lp.good": "Restart the moment it resets",
+    "lp.bad": "30 minutes late every time",
+    "lp.hour": (h) => `${h}:00`,
+    "lane.sum": (n) => `<b>${n}</b> windows`,
+    "lp.caption": "Starting at 8 a.m. Three 30-minute delays cost you a whole window that day.",
+    "lp.open": "Open dashboard",
+    "lp.start": "Start with GitHub",
+    "lp.board": "This week's leaderboard",
+    "lp.how1.h": "Keep coding as usual",
+    "lp.how1.p": "Run one command once. It adds Claude Code hooks and a Codex notify entry. When you hit a limit, only the reset time is sent — never your prompts or code.",
+    "lp.how2.h": "Your phone buzzes the moment it resets",
+    "lp.how2.p": "Notifications come from the server, so they arrive even while your computer sleeps. If you haven't restarted 10 minutes after a reset, we nudge you again.",
+    "lp.how3.h": "Keep the streak alive",
+    "lp.how3.p": "You set your own daily goal. Hit it day after day to grow your 🔥 streak, and every extra window in a day earns more XP. Seven days in a row earns a freeze 🧊 that saves one missed day. Leaderboards pit you against people on the same plan, like Claude Pro or ChatGPT Plus.",
+
+    "dash.title": "Dashboard · ratelimit.world",
+    "dash.stats": "Stats",
+    "stat.streak": "day streak",
+    "stat.freezes": "freezes",
+    "stat.freezes.tip": "One for every 7 days in a row. Up to 2",
+    "stat.weekXp": "XP this week",
+    "stat.trophies": "weekly maxed",
+    "stat.trophies.tip": "Times you used up a weekly limit",
+    "stat.best": "longest",
+    "stat.total": "windows used",
+    "lock.title": "You used up a weekly limit!",
+    "lock.item": (tool, when) => `${TOOL[tool]} resets ${when}`,
+    "lock.sep": ", ",
+    "lock.tail": ". Your 🔥 streak is protected until then.",
+    "today.h": "Today",
+    "today.track": "Today's windows",
+    "today.done": (goal, next, tier, xp) => `Goal of ${win(goal)} reached. Window ${next} (“${tier}”) earns <b>+${xp} XP</b>`,
+    "today.left": (left) => `<b>${left}</b> to go`,
+    "today.nextAt": (t) => ` · next window from ${t}`,
+    "today.nextNow": " · you can start the next window now",
+    "today.record": "new daily best",
+    "today.best": (n) => `best day: ${win(n)}`,
+    "today.late": (m) => `Late starts today: <b>${m}</b> min`,
+    "today.quick": (n) => `<b>${n}</b> instant restarts in a row`,
+    "slot.now": "now",
+    "slot.at": (t) => `${t}`,
+    "slot.goal": "goal",
+    "dial.limited": "resets in",
+    "dial.ready": "Restart now!",
+    "dial.idle": "waiting",
+    "dial.weekly": "weekly reset in",
+    "dial.sub.weekly": (when) => `🏆 Weekly limit hit · until ${when}`,
+    "dial.sub.limited": (t) => `resets at ${t}`,
+    "dial.sub.ready": (t) => `reset at ${t}`,
+    "dial.sub.idle": "When you hit a limit, the countdown appears here",
+    "heat.h": "Last 4 weeks",
+    "heat.aria": (n) => `Windows used in the last ${n} days`,
+    "heat.frozen": "saved by a freeze",
+    "heat.locked": "weekly limit (streak protected)",
+    "heat.trophy": "🏆 weekly maxed",
+    "legend.under": "under goal",
+    "legend.met": "goal",
+    "legend.over": "over",
+    "legend.frozen": "freeze",
+    "legend.locked": "weekly limit",
+    "push.h": "Phone notifications",
+    "push.ios": "On iPhone, tap Share in Safari, choose “Add to Home Screen”, then open the app from that icon.",
+    "push.enable": "Get notifications on this device",
+    "push.test": "Send a test notification",
+    "setup.h.linked": "Linked computers",
+    "setup.h.new": "First, link your computer",
+    "setup.p.linked": "Linked. Use the same command to add another computer.",
+    "setup.p.new": "Run this once in the terminal of the computer where you use Claude Code or Codex.",
+    "setup.plans": "Detected plans",
+    "setup.note": (last) => `Requires Node.js 18 or later. To remove it, run <code>node ~/.ratelimit-world/ratelimit-world.mjs uninstall</code>. Last update: ${last ?? "none yet"}`,
+    "settings.h": "Settings",
+    "settings.goal": "Daily goal",
+    "settings.goal.unit": "windows",
+    "settings.remind": "Reminder time",
+    "settings.tz": "Time zone",
+    "settings.lang": "Language",
+    "settings.notify": "Notifications",
+    "notify.hit": "When I use up a window or weekly limit (+XP)",
+    "notify.reset": "The moment a window resets",
+    "notify.late": "When I haven't restarted 10 minutes after a reset",
+    "notify.pinch": "Reminder (goal not met by the reminder time)",
+    "notify.goal": "Goal reached",
+    "settings.public": "Make my profile public and join the leaderboard",
+    "settings.save": "Save settings",
+    "dash.profile": "Public profile",
+    "dash.logout": "Log out",
+
+    "wel.title": "Welcome · ratelimit.world",
+    "wel.steps": "Setup progress",
+    "wel.step1": "Link computer",
+    "wel.step2": "Goal",
+    "wel.step3": "Notifications",
+    "wel.hello": (login) => `Welcome, @${login}`,
+    "wel.link.h": "First, link your computer",
+    "wel.link.p": "Paste this into the terminal of the computer where you use Claude Code or Codex. When your browser opens, click “Link”.",
+    "wel.wait": "Waiting for your computer…",
+    "wel.done": "✅ Linked!",
+    "wel.total": "windows used in the last 60 days",
+    "wel.avgLate": "average minutes late after a reset",
+    "wel.bestDay": "most windows in a day",
+    "wel.toGoal": "Set a goal",
+    "wel.later": "Link later",
+    "wel.goal.h": "How many windows a day?",
+    "wel.goal.p": "Use up your goal every day to grow your 🔥 streak. Start with something easy and raise it once it sticks.",
+    "wel.goal.note": "You can change this anytime in settings.",
+    "goal.1.name": "1 a day", "goal.1.desc": "Build the habit first",
+    "goal.2.name": "2 a day", "goal.2.desc": "One morning, one evening",
+    "goal.3.name": "3 a day", "goal.3.desc": "A full working day",
+    "goal.4.name": "4 a day", "goal.4.desc": "Almost all day",
+    "wel.push.h": "Buzz your phone the moment it resets",
+    "wel.push.p": "This is the heart of the service: we notify you when a window resets, when you use one up, and when you're running late.",
+    "wel.finish": "Get started",
+    "wel.skipPush": "Set up notifications later",
+
+    "prof.shareText": (n) => `🔥 ${n}-day streak of maxing out my AI rate limits`,
+    "prof.ogTitle": (login, n) => `@${login} — 🔥 ${n}-day streak`,
+    "prof.ogDesc": (c, g, xp) => `Today ${c}/${g} · ${xp} XP this week`,
+    "prof.today": (n) => `Today: ${win(n)}`,
+    "prof.cardAlt": (login) => `Stats card for @${login}`,
+    "prof.shareX": "Share on X",
+    "prof.copyLink": "Copy link",
+    "board.title": "This week's leaderboard · ratelimit.world",
+    "board.h": "This week's leaderboard",
+    "board.p": "A window is a different size on every plan, so you compete with people on the same plan. XP counts from Monday 00:00 in each person's time zone, using only that tool's windows.",
+    "board.plans": "Plans",
+    "board.empty": "Nobody here yet this week. Use up the first window.",
+    "verify.title": "Link computer · ratelimit.world",
+    "verify.h": "Link this computer?",
+    "verify.p": "Check that the code matches the one in your terminal.",
+    "verify.code": "Confirmation code",
+    "verify.btn": (login) => `Link as @${login}`,
+    "verify.note": "Once linked, the computer sends only the times you hit a limit and when it resets.",
+
+    "card.streak": "day streak",
+    "card.sub": (xp, best) => `days with a maxed 5-hour window · ${xp} XP this week · best ${best} days`,
+
+    "tier.left": (n) => `${n} to go`,
+    "tier.goal": "Goal!",
+    "tier.over": "Over goal",
+    "tier.beyond": "Beyond the limit",
+
+    "c.ready": "Restart now!",
+    "c.copied": "Copied",
+    "c.saved": "Saved",
+    "c.saveFailed": "Couldn't save. Please try again",
+    "c.lateNow": "{n} min late",
+    "c.days": "{d}d {h}h",
+    "c.pushOff": "Stop notifications on this device",
+    "c.pushOn": "Get notifications on this device",
+    "c.pushUnsupported": "This browser does not support notifications.",
+    "c.pushNoKey": "The server's notification key (VAPID) isn't set up yet.",
+    "c.pushStopped": "Notifications stopped on this device",
+    "c.pushDenied": "Notifications were blocked. Allow them in your browser settings",
+    "c.pushReady": "Notifications are on. Send a test to check",
+    "c.pushFailed": "Couldn't turn on notifications ({e})",
+    "c.testSent": "Test notification sent",
+    "c.testFailed": "Couldn't send it. Turn notifications off and on again",
+    "c.toast": "<b>Window {n} · {tier}</b> +{xp} XP",
+    "c.toastGoal": "🔥 Today's goal reached!",
+    "c.toastRecord": "New daily best!",
+    "c.revealEmpty": "No history yet. Your 🔥 starts with the first window you use up.",
+    "c.revealLost": "You missed {lost} in total by not noticing resets. Let's get that to zero.",
+    "c.revealGood": "Already a great pace. Build on it every day.",
+    "c.hm": "{h}h {m}m",
+    "c.m": "{m} min",
+    "c.recommend": "Suggested",
+    "c.suggest": "On a typical day you use up {typical} and your best is {best}. Start with your typical day, then raise it once it sticks.",
+  },
+};
+
+export function tr(lang) {
+  const dict = T[lang] ?? T.ja;
+  return (key, ...args) => {
+    const v = dict[key] ?? T.ja[key] ?? key;
+    return typeof v === "function" ? v(...args) : v;
+  };
+}
+
+export const CLIENT_KEYS = Object.keys(T.ja).filter((k) => k.startsWith("c."));
+export const clientStrings = (lang) => Object.fromEntries(CLIENT_KEYS.map((k) => [k, (T[lang] ?? T.ja)[k]]));
+
+// 称号: logic.js の tierOf が返すキーを、その言語の言葉にする
+export function tierName(lang, tier) {
+  if (!tier) return "";
+  const t = tr(lang);
+  return tier.key === "left" ? t("tier.left", tier.n) : t(`tier.${tier.key}`);
+}
+
+// 日時の表示 (週間リミットのリセットなど)
+export function fmtWhen(lang, ms, tz) {
+  return new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", {
+    timeZone: tz, month: lang === "ja" ? "numeric" : "short", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).format(new Date(ms));
+}
+
+// ---------- スマホ通知の文面 (キャラクターの口調) ----------
+const pushJa = {
+  reset(tool, s, { next, nextXp, nextTier }) {
+    const left = Math.max(0, s.goal - s.todayCount);
+    return {
+      title: `⚡ ${TOOL[tool]} がリセットされたよ！`,
+      body: `今すぐ始めれば次のリセットは ${next}。` + (left ? `今日はあと ${left} 枠で目標達成！` : `${s.todayCount + 1}枠目で「${nextTier}」、+${nextXp} XP`),
+    };
+  },
+  late(tool, minutes, s, { next }) {
+    return {
+      title: `⏰ リセットから ${minutes} 分たったよ…`,
+      body: `${TOOL[tool]} がずっと待ってる。今始めても次のリセットは ${next}。出遅れはそのまま次に響くよ`,
+    };
+  },
+  pinch(s) {
+    const left = s.goal - s.todayCount;
+    const fire = s.streak > 0 ? `🔥${s.streak}日連続が途切れちゃう` : "今日こそ記録を始めよう";
+    return {
+      title: `😱 今日まだ ${s.todayCount}/${s.goal} 枠…`,
+      body: `あと ${left} 枠。${fire}${s.freezes > 0 ? `（フリーズ ${s.freezes} 個あり）` : ""}。まずは目の前の1枠から`,
+    };
+  },
+  hit(tool, s, { n, xp, tier, resetAt, nextXp }) {
+    const extra = [];
+    if (n === s.goal) extra.push(`🔥 目標達成、${s.streak}日連続！`);
+    else if (n < s.goal) extra.push(`目標まであと ${s.goal - n} 枠`);
+    if (s.todayIsRecord && n > 1) extra.push("1日の自己ベスト更新！");
+    return {
+      title: `🧱 今日${n}枠目${n >= s.goal ? `「${tier}」` : ""} +${xp} XP`,
+      body: `${TOOL[tool]} を使い切ったよ。${extra.join(" ")} 次のリセットは ${resetAt}。${n + 1}枠目は +${nextXp} XP`,
+    };
+  },
+  weekly(tool, s, { when, xp }) {
+    return {
+      title: `🏆 ${TOOL[tool]} の週間リミットを使い切った！ +${xp} XP`,
+      body: `1週間分を使い切った、まさに限界越え。${when} のリセットまで🔥ストリークは自動で守られるよ`,
+    };
+  },
+  goal(s, { nextXp, nextTier }) {
+    return { title: `🔥 ${s.streak}日連続 達成！`, body: `今日 ${s.todayCount} 枠。${s.todayCount + 1}枠目は +${nextXp} XP で「${nextTier}」` };
+  },
+  test() {
+    return { title: "🔥 通知テスト", body: "リセットの瞬間にこんなふうに届くよ！" };
+  },
+};
+
+const pushEn = {
+  reset(tool, s, { next, nextXp, nextTier }) {
+    const left = Math.max(0, s.goal - s.todayCount);
+    return {
+      title: `⚡ ${TOOL[tool]} just reset!`,
+      body: `Start now and your next reset is at ${next}. ` + (left ? `${left} more to hit today's goal!` : `Window ${s.todayCount + 1} is “${nextTier}” for +${nextXp} XP`),
+    };
+  },
+  late(tool, minutes, s, { next }) {
+    return {
+      title: `⏰ ${minutes} minutes since the reset…`,
+      body: `${TOOL[tool]} is waiting. Start now and the next reset is ${next}. Every minute late pushes the next one back`,
+    };
+  },
+  pinch(s) {
+    const left = s.goal - s.todayCount;
+    const fire = s.streak > 0 ? `Your 🔥 ${s.streak}-day streak is at risk` : "Start your streak today";
+    return {
+      title: `😱 Only ${s.todayCount}/${s.goal} today…`,
+      body: `${left} to go. ${fire}${s.freezes > 0 ? ` (${s.freezes} freeze${s.freezes === 1 ? "" : "s"} left)` : ""}. Just take the next window`,
+    };
+  },
+  hit(tool, s, { n, xp, tier, resetAt, nextXp }) {
+    const extra = [];
+    if (n === s.goal) extra.push(`🔥 Goal reached — ${s.streak}-day streak!`);
+    else if (n < s.goal) extra.push(`${s.goal - n} more to hit your goal.`);
+    if (s.todayIsRecord && n > 1) extra.push("New daily best!");
+    return {
+      title: `🧱 Window ${n} today${n >= s.goal ? ` · ${tier}` : ""} +${xp} XP`,
+      body: `You used up ${TOOL[tool]}. ${extra.join(" ")} Next reset at ${resetAt}. Window ${n + 1} is worth +${nextXp} XP`,
+    };
+  },
+  weekly(tool, s, { when, xp }) {
+    return {
+      title: `🏆 You maxed out ${TOOL[tool]}'s weekly limit! +${xp} XP`,
+      body: `A whole week used up — truly past the limit. Your 🔥 streak is protected until it resets ${when}`,
+    };
+  },
+  goal(s, { nextXp, nextTier }) {
+    return { title: `🔥 ${s.streak}-day streak!`, body: `${win(s.todayCount)} today. Window ${s.todayCount + 1} is “${nextTier}” for +${nextXp} XP` };
+  },
+  test() {
+    return { title: "🔥 Test notification", body: "This is how it'll look the moment a window resets!" };
+  },
+};
+
+export const push = (lang) => (lang === "en" ? pushEn : pushJa);

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   remind_at TEXT NOT NULL DEFAULT '21:00',         -- ピンチ通知の時刻 (ユーザーのタイムゾーン)
   notify TEXT NOT NULL DEFAULT '{"hit":true,"reset":true,"late":true,"pinch":true,"goal":true}',
   public INTEGER NOT NULL DEFAULT 1,
+  lang TEXT,                                       -- 'ja' | 'en' (スマホ通知の言語。画面は cookie が優先)
   claude_plan TEXT,                                -- 'pro' | 'max_5x' | 'max_20x' ... (CLI が ~/.claude.json から読む)
   codex_plan TEXT,                                 -- 'plus' | 'pro' ... (Codex のログの plan_type)
   last_sync_at INTEGER,

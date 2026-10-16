@@ -1,4 +1,7 @@
 // ダッシュボードの動き: リセットまでのカウントダウン、通知の登録、設定の保存、コピー
+// 文言はサーバーが埋め込む window.RW_T (i18n.js の "c." で始まるもの) から引く
+const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/g, (_, x) => v[x] ?? "");
+
 (() => {
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -17,13 +20,13 @@
         d.classList.remove("limited", "weekly");
         d.classList.add("ready");
         delete d.dataset.reset;
-        $(".ring-text small", d).textContent = "今すぐ再開！";
+        $(".ring-text small", d).textContent = T("c.ready");
         clock.textContent = "GO";
         continue;
       }
       const h = Math.floor(left / 3600000), m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;
       // 週間リミットのように 1日以上先なら「3日 13時間」で見せる
-      clock.textContent = h >= 24 ? `${Math.floor(h / 24)}日 ${h % 24}時間` : `${h}:${pad(m)}:${pad(s)}`;
+      clock.textContent = h >= 24 ? T("c.days", { d: Math.floor(h / 24), h: h % 24 }) : `${h}:${pad(m)}:${pad(s)}`;
       if (d.classList.contains("limited")) {
         const fill = $(".fill", d);
         fill.style.strokeDashoffset = (+fill.dataset.c * (1 - Math.min(1, left / WINDOW_MS))).toFixed(1);
@@ -31,7 +34,7 @@
     }
     for (const d of $$(".dial.ready[data-since]")) {
       const min = Math.floor((now - +d.dataset.since) / 60000);
-      $(".ring-text small", d).textContent = min > 0 ? `${min}分 出遅れ中` : "今すぐ再開！";
+      $(".ring-text small", d).textContent = min > 0 ? T("c.lateNow", { n: min }) : T("c.ready");
     }
   }
   if ($(".dial")) { tick(); setInterval(tick, 1000); }
@@ -46,7 +49,7 @@
 
   // ---------- copy ----------
   async function copy(text, btn) {
-    try { await navigator.clipboard.writeText(text); const t = btn.textContent; btn.textContent = "コピーしました"; setTimeout(() => (btn.textContent = t), 1500); } catch {}
+    try { await navigator.clipboard.writeText(text); const t = btn.textContent; btn.textContent = T("c.copied"); setTimeout(() => (btn.textContent = t), 1500); } catch {}
   }
   for (const b of $$("[data-copy]")) b.addEventListener("click", () => copy($("code", b.parentElement).textContent, b));
   for (const b of $$("[data-copy-text]")) b.addEventListener("click", () => copy(b.dataset.copyText, b));
@@ -64,9 +67,9 @@
       const status = $("[data-settings-status]");
       const res = await fetch("/api/settings", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ goal: f.get("goal"), remindAt: f.get("remindAt"), tz: f.get("tz"), notify, public: $("input[name=public]", form).checked }),
+        body: JSON.stringify({ goal: f.get("goal"), remindAt: f.get("remindAt"), tz: f.get("tz"), lang: f.get("lang"), notify, public: $("input[name=public]", form).checked }),
       });
-      status.textContent = res.ok ? "保存しました" : "保存できませんでした。もう一度お試しください";
+      status.textContent = res.ok ? T("c.saved") : T("c.saveFailed");
       if (res.ok) setTimeout(() => location.reload(), 600);
     });
   }
@@ -83,14 +86,14 @@
 
     const b64 = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
     const setOn = (on) => {
-      enableBtn.textContent = on ? "この端末の通知を止める" : "この端末で通知を受け取る";
+      enableBtn.textContent = on ? T("c.pushOff") : T("c.pushOn");
       enableBtn.dataset.on = on ? "1" : "";
       testBtn.hidden = !on;
     };
 
     (async () => {
-      if (!supported) { enableBtn.disabled = true; status.textContent = "このブラウザは通知に対応していません。"; return; }
-      if (!vapid) { enableBtn.disabled = true; status.textContent = "サーバーの通知設定（VAPID 鍵）がまだありません。"; return; }
+      if (!supported) { enableBtn.disabled = true; status.textContent = T("c.pushUnsupported"); return; }
+      if (!vapid) { enableBtn.disabled = true; status.textContent = T("c.pushNoKey"); return; }
       const reg = await navigator.serviceWorker.register("/sw.js");
       const sub = await reg.pushManager.getSubscription();
       setOn(!!sub && Notification.permission === "granted");
@@ -105,25 +108,25 @@
           await sub.unsubscribe();
         }
         setOn(false);
-        status.textContent = "この端末への通知を止めました";
+        status.textContent = T("c.pushStopped");
         return;
       }
       const perm = await Notification.requestPermission();
-      if (perm !== "granted") { status.textContent = "通知が許可されませんでした。ブラウザの設定から許可してください"; return; }
+      if (perm !== "granted") { status.textContent = T("c.pushDenied"); return; }
       try {
         const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(vapid) });
         const res = await fetch("/api/push/subscribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: sub.toJSON() }) });
         if (!res.ok) throw new Error(String(res.status));
         setOn(true);
-        status.textContent = "通知を受け取れるようになりました。テスト通知で確認できます";
+        status.textContent = T("c.pushReady");
       } catch (e) {
-        status.textContent = `通知を登録できませんでした (${e.message})`;
+        status.textContent = T("c.pushFailed", { e: e.message });
       }
     });
 
     testBtn.addEventListener("click", async () => {
       const res = await fetch("/api/push/test", { method: "POST" }).then((r) => r.json()).catch(() => ({}));
-      status.textContent = res.ok ? "テスト通知を送りました" : "送れませんでした。通知をいったん止めて、もう一度受け取る設定にしてください";
+      status.textContent = res.ok ? T("c.testSent") : T("c.testFailed");
     });
   }
 })();
@@ -175,7 +178,7 @@
       setTimeout(() => {
         const r = $(".slot.done.pop:last-of-type", today)?.getBoundingClientRect() ?? today.getBoundingClientRect();
         burst(r.left + r.width / 2, r.top + r.height / 2, goalHit || record ? 60 : 30);
-        toast(`<b>${n}枠目「${tier}」</b> +${lastXp} XP${goalHit ? "<br>🔥 今日の目標達成！" : ""}${record ? "<br>1日の自己ベスト更新！" : ""}`);
+        toast(T("c.toast", { n, tier, xp: lastXp }) + (goalHit ? `<br>${T("c.toastGoal")}` : "") + (record ? `<br>${T("c.toastRecord")}` : ""));
       }, fresh.length * 180 + 250);
     }
     store.set("rw:seen", { day, count: n });
@@ -222,12 +225,12 @@
     countUp($('[data-h="total"]', root), h.total);
     countUp($('[data-h="avgLateMin"]', root), h.avgLateMin);
     countUp($('[data-h="bestDay"]', root), h.bestDay);
-    const lost = h.lostMin >= 60 ? `${Math.floor(h.lostMin / 60)}時間${h.lostMin % 60}分` : `${h.lostMin}分`;
+    const lost = h.lostMin >= 60 ? T("c.hm", { h: Math.floor(h.lostMin / 60), m: h.lostMin % 60 }) : T("c.m", { m: h.lostMin });
     $('[data-h="message"]', root).textContent = h.total === 0
-      ? "まだ記録はありません。最初の1枠を使い切ったら、ここから🔥が始まります。"
+      ? T("c.revealEmpty")
       : h.avgLateMin
-        ? `リセットに気づかず、合計 ${lost} を取りこぼしていました。これをゼロにしよう。`
-        : "すでにいいペース。ここから毎日積み上げよう。";
+        ? T("c.revealLost", { lost })
+        : T("c.revealGood");
     const r = $(".reveal-title", root).getBoundingClientRect();
     burst(r.left + r.width / 2, r.top + r.height / 2, 50);
   }
@@ -239,10 +242,10 @@
       const rec = +c.dataset.goalPick === typical;
       c.classList.toggle("rec", rec);
       $(".goal-badge", c)?.remove();
-      if (rec) c.insertAdjacentHTML("afterbegin", '<span class="goal-badge">おすすめ</span>');
+      if (rec) c.insertAdjacentHTML("afterbegin", `<span class="goal-badge">${T("c.recommend")}</span>`);
     }
     if (history?.activeDays) {
-      $("[data-suggest]", root).textContent = `あなたのふだんの1日は ${history.typicalDay} 枠、最多は ${history.bestDay} 枠でした。まずはふだんどおりの数から始めて、続けられたら上げましょう。`;
+      $("[data-suggest]", root).textContent = T("c.suggest", { typical: history.typicalDay, best: history.bestDay });
     }
   }
   for (const b of $$("[data-goal-pick]", root)) {

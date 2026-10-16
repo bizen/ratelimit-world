@@ -85,7 +85,7 @@ test("tool state, today's late minutes and quick-start run", () => {
 });
 
 test("combo XP grows with each window in the same day", async () => {
-  const { msg } = await import("../src/logic.js");
+  const { notice } = await import("../src/notice.js");
   const now = jst("2026-10-16T22:00:00");
   const ws = [
     win("claude", "2026-10-16T02:00:00", "2026-10-16T05:00:00", "2026-10-16T05:01:00"),  // 100 + 50 (即スタート)
@@ -96,25 +96,30 @@ test("combo XP grows with each window in the same day", async () => {
   const s = computeStats(ws, { tz: TZ, goal: 2, now });
   assert.deepEqual(s.todayWindows.map((w) => w.xp), [150, 120, 150]);
   assert.equal(s.todayXp, 420);
-  assert.equal(s.tier, "目標超え");
-  assert.equal(s.nextTier, "限界突破");
+  assert.deepEqual(s.tier, { key: "over" });
+  assert.deepEqual(s.nextTier, { key: "beyond" });
   assert.equal(s.nextXp, 200);
   assert.equal(s.bestDay, 1);
   assert.equal(s.todayIsRecord, true);
-  const m = msg.hit("codex", s, ws[2]);
+  const m = notice({ lang: "ja" }, "hit", s, now, { tool: "codex", w: ws[2] });
   assert.match(m.title, /3枠目「目標超え」 \+150 XP/);
   assert.match(m.body, /自己ベスト更新/);
-  const goal = msg.hit("claude", computeStats(ws.slice(0, 2), { tz: TZ, goal: 2, now }), ws[1]);
+  const en = notice({ lang: "en" }, "hit", s, now, { tool: "codex", w: ws[2] });
+  assert.match(en.title, /Window 3 today · Over goal \+150 XP/);
+  assert.match(en.body, /New daily best/);
+  const goal = notice({ lang: "ja" }, "hit", computeStats(ws.slice(0, 2), { tz: TZ, goal: 2, now }), now, { tool: "claude", w: ws[1] });
   assert.match(goal.body, /目標達成/);
 });
 
 test("tiers are relative to the user's own goal", async () => {
   const { tierOf } = await import("../src/logic.js");
-  assert.equal(tierOf(1, 3), "あと2枠");
-  assert.equal(tierOf(1, 1), "目標達成");
-  assert.equal(tierOf(2, 1), "目標超え");
-  assert.equal(tierOf(3, 1), "限界突破");
-  assert.equal(tierOf(5, 3), "限界突破");
+  const { tierName } = await import("../src/i18n.js");
+  assert.equal(tierName("ja", tierOf(1, 3)), "あと2枠");
+  assert.equal(tierName("ja", tierOf(1, 1)), "目標達成");
+  assert.equal(tierName("ja", tierOf(2, 1)), "目標超え");
+  assert.equal(tierName("ja", tierOf(3, 1)), "限界突破");
+  assert.equal(tierName("en", tierOf(5, 3)), "Beyond the limit");
+  assert.equal(tierName("en", tierOf(1, 3)), "2 to go");
 });
 
 test("weekly limit hit gives a big reward and protects the streak until reset", async () => {
@@ -131,4 +136,25 @@ test("weekly limit hit gives a big reward and protects the streak until reset", 
   assert.deepEqual(s.weeklyLocks, []);
   const s2 = computeStats(ws, { tz: TZ, goal: 2, now: jst("2026-10-16T10:00:00"), weekly });
   assert.equal(s2.weeklyLocks.length, 1);
+});
+
+test("every Japanese string has an English counterpart", async () => {
+  const { T } = await import("../src/i18n.js");
+  const missing = Object.keys(T.ja).filter((k) => !(k in T.en));
+  const extra = Object.keys(T.en).filter((k) => !(k in T.ja));
+  assert.deepEqual({ missing, extra }, { missing: [], extra: [] });
+});
+
+test("all notifications render in both languages", async () => {
+  const { notice } = await import("../src/notice.js");
+  const now = jst("2026-10-16T21:00:00");
+  const ws = daysOf(1, "2026-10-16", 1);
+  const s = computeStats(ws, { tz: TZ, goal: 2, now });
+  for (const lang of ["ja", "en"]) {
+    for (const [kind, extra] of [["reset", { tool: "claude" }], ["late", { tool: "codex", minutes: 12 }], ["pinch", {}], ["goal", {}], ["hit", { tool: "claude", w: ws[0] }], ["weekly", { tool: "codex", w: { reset_at: now + 3 * 86400000 } }], ["test", {}]]) {
+      const m = notice({ lang }, kind, kind === "test" ? null : s, now, extra);
+      assert.ok(m.title && m.body && !/undefined|NaN/.test(m.title + m.body), `${lang} ${kind}: ${m.title} / ${m.body}`);
+      if (lang === "en") assert.ok(!/[\u3040-\u30ff\u4e00-\u9fff]/.test(m.title + m.body), `${kind} has Japanese in English: ${m.title} ${m.body}`);
+    }
+  }
 });

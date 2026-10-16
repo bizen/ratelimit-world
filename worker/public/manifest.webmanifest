@@ -1,7 +1,7 @@
 {
   "name": "ratelimit.world",
   "short_name": "ratelimit",
-  "description": "Claude Code と Codex の5時間枠を、リセットの瞬間から使い切る",
+  "description": "Push past your (rate) limit. Restart Claude Code and Codex the moment they reset.",
   "start_url": "/me",
   "scope": "/",
   "display": "standalone",
