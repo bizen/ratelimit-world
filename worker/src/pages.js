@@ -462,6 +462,9 @@ export function race(pct, start, now) {
   return { elapsed, lead, maxAt: at && at <= reset ? at : null, pctAtReset: at && at > reset ? Math.round((pct * WINDOW_MS) / Math.max(1, now - start)) : null };
 }
 
+// 「リセット待ち」の稲妻。絵文字の ⚡ は黄色で、Codex の白い箱では見えにくいので、文字と同じ色で描く
+const BOLT = `<svg class="bolt" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 1 3 9h4l-1 6 6.5-8h-4z" fill="currentColor"/></svg>`;
+
 function dial(ctx, tool, s, now) {
   const { t, lang } = ctx;
   const x = s.tools[tool];
@@ -477,7 +480,7 @@ function dial(ctx, tool, s, now) {
     state = "limited";
     resetAt = x.resetAt;
     usedPct = 100;
-    box = { title: t("box.limited"), detail: t("box.resetAt", localTime(x.resetAt, s.tz)) };
+    box = { icon: BOLT, title: t("box.limited"), detail: t("box.resetAt", localTime(x.resetAt, s.tz)) };
   } else if (s.nextReset?.[tool]?.resetAt > now) {
     // 使用中 (中継オフの Claude Code はリセット時刻が推定で、使用率は不明)
     const r = s.nextReset[tool];
@@ -524,7 +527,7 @@ function dial(ctx, tool, s, now) {
         : `<small>${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b>`}
     </div>
   </div>
-  <div class="pace ${box.kind ?? "neutral"}" ${box.kind ? "data-pace" : ""}><b>${esc(box.title)}</b><span>${esc(box.detail)}</span></div>
+  <div class="pace ${box.kind ?? "neutral"}" ${box.kind ? "data-pace" : ""}><b>${box.icon ?? ""}${esc(box.title)}</b><span>${esc(box.detail)}</span></div>
   ${dialFoot(ctx, tool, s, now, state === "limited" ? resetAt : null)}
 </article>`;
 }
