@@ -176,6 +176,7 @@ export const T = {
     "goal.4.name": "毎日4枠", "goal.4.desc": "ほぼ一日中",
     "wel.push.h": "リセットの瞬間に、スマホを鳴らす",
     "wel.push.p": "このサービスの本体です。リセットした瞬間、枠を使い切った瞬間、出遅れているときに知らせます。",
+    "wel.back.goal": "← 目標に戻る",
     "wel.finish": "はじめる",
     "wel.skipPush": "通知はあとで",
 
@@ -396,6 +397,7 @@ export const T = {
     "goal.4.name": "4 a day", "goal.4.desc": "Almost all day",
     "wel.push.h": "Buzz your phone the moment it resets",
     "wel.push.p": "This is the heart of the service: we notify you when a window resets, when you use one up, and when you're running late.",
+    "wel.back.goal": "← Back to goal",
     "wel.finish": "Get started",
     "wel.skipPush": "Set up notifications later",
 

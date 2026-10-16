@@ -188,13 +188,22 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
   const root = $("[data-welcome]");
   if (!root) return;
   let step = 1;
-  const show = (k) => {
+  let goal = +root.dataset.goal || null;   // いま選んでいる目標 (戻ってきたときに選択済みで見せる)
+  // ステップを切り替える。ブラウザの「戻る」でも前のステップに戻れるよう履歴に積む
+  const show = (k, { push = true } = {}) => {
     step = k;
     for (const el of $$(".step", root)) el.hidden = +el.dataset.step !== k;
-    $$(".steps li", root).forEach((li, i) => li.classList.toggle("on", i < k));
-    if (k === 1) poll();
+    $$(".steps li", root).forEach((li, i) => {
+      li.classList.toggle("on", i < k);
+      // 通った目標のステップは押して戻れる (PC 連携のステップには戻さない)
+      li.classList.toggle("back", i === 1 && k > 2);
+    });
+    if (k === 1 && !history) poll();
     if (k === 2) suggest();
+    if (push) window.history.pushState({ step: k }, "", k === 1 ? location.pathname : `#step${k}`);
+    $(`.step[data-step="${k}"] h1`, root)?.scrollIntoView?.({ block: "nearest" });
   };
+  addEventListener("popstate", (e) => show(e.state?.step || 1, { push: false }));
   const post = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
 
   // 1) PC の連携を待つ。届いたら過去の記録を見せる
@@ -262,10 +271,20 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
     if (history?.activeDays) {
       $("[data-suggest]", root).textContent = T("c.suggest", { typical: history.typicalDay, best: history.bestDay });
     }
+    markGoal();
   }
+  function markGoal() {
+    // 一度選んだあとに戻ってきたら、その目標を選択済みにしておく
+    for (const c of $$("[data-goal-pick]", root)) c.classList.toggle("selected", chosen && +c.dataset.goalPick === goal);
+  }
+  let chosen = false;
   for (const b of $$("[data-goal-pick]", root)) {
     b.addEventListener("click", async () => {
+      goal = +b.dataset.goalPick;
+      chosen = true;
+      markGoal();
       b.classList.add("picked");
+      setTimeout(() => b.classList.remove("picked"), 400);
       // ブラウザのタイムゾーンもここで保存する
       await post("/api/settings", { goal: +b.dataset.goalPick, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
       setTimeout(() => show(3), calm ? 0 : 260);
@@ -273,7 +292,12 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
   }
 
   for (const b of $$("[data-next]", root)) b.addEventListener("click", () => show(+b.dataset.next));
-  show(1);
+  // 戻る操作はブラウザの履歴を 1つ戻すのと同じにする (履歴が 1 → 2 → 3 の一直線のまま保たれる)
+  const goBack = () => (window.history.state?.step === 3 ? window.history.back() : show(2));
+  for (const b of $$("[data-back]", root)) b.addEventListener("click", goBack);
+  $$(".steps li", root)[1]?.addEventListener("click", () => { if (step > 2) goBack(); });
+  window.history.replaceState({ step: 1 }, "", location.pathname);
+  show(1, { push: false });
   for (const b of $$("[data-finish]", root)) {
     b.addEventListener("click", async () => {
       await post("/api/onboarded");

@@ -359,6 +359,7 @@ export function welcome(ctx, { origin, vapidKey }) {
   </div>
 
   <div class="step" data-step="3" hidden>
+    <button class="link back-link" data-back="2">${t("wel.back.goal")}</button>
     <h1 class="h1">${t("wel.push.h")}</h1>
     <p>${t("wel.push.p")}</p>
     <p class="muted" data-push-hint>${t("push.ios")}</p>
