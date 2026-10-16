@@ -17,7 +17,7 @@ import { spawn, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -42,6 +42,11 @@ const L = (jaText, enText) => (isJa() ? jaText : enText);
 
 const claudeDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
 const codexDir = () => process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+// Claude デスクトップアプリの Cowork。セッションごとに Claude Code と同じ形式の会話ログと、audit.jsonl を残す
+const coworkDir = () => process.env.RATELIMIT_WORLD_COWORK_DIR || (
+  process.platform === "darwin" ? path.join(os.homedir(), "Library", "Application Support", "Claude", "local-agent-mode-sessions")
+  : process.platform === "win32" ? path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "Claude", "local-agent-mode-sessions")
+  : path.join(os.homedir(), ".config", "Claude", "local-agent-mode-sessions"));
 
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return d; } };
 function writeJson(f, v) {
@@ -179,10 +184,17 @@ export function parseResetText(text, hitMs) {
 const WEEKLY_RE = /(weekly|week|opus limit|sonnet limit|monthly)/i;
 // トークン使用量: 1回の応答ごとに [入力, キャッシュ書き込み(5分), キャッシュ書き込み(1時間), キャッシュ読み出し, 出力]。
 // API 料金に換算するのはサーバー側 (料金表を後から直せるように)
+// Claude Code のログと、Cowork のセッションの中にある同じ形式のログ (.claude/projects の下だけ)
+function* claudeLogFiles(sinceMs) {
+  yield* walkJsonl(path.join(claudeDir(), "projects"), sinceMs);
+  const mark = `${path.sep}.claude${path.sep}projects${path.sep}`;
+  for (const f of walkJsonl(coworkDir(), sinceMs)) if (f.includes(mark)) yield f;
+}
+
 export function scanClaude(sinceMs) {
   const hits = [], weekly = [], activity = [];
   const usage = new Map(); // 同じ応答が複数行に書かれるので message.id + requestId で 1回に数える
-  for (const file of walkJsonl(path.join(claudeDir(), "projects"), sinceMs)) {
+  for (const file of claudeLogFiles(sinceMs)) {
     for (const line of lines(file)) {
       if (line.includes('"isApiErrorMessage":true')) {
         const ev = parseLine(line);
@@ -225,7 +237,38 @@ export function scanClaude(sinceMs) {
       }
     }
   }
-  return { hits, weekly, activity, usage: [...usage.values()] };
+  const cowork = scanCowork(sinceMs);
+  return { hits: [...hits, ...cowork.hits], weekly: [...weekly, ...cowork.weekly], activity, usage: [...usage.values()], current: cowork.current };
+}
+
+// Cowork の audit.jsonl: リクエストごとに rate_limit_event (status / rateLimitType / resetsAt / 使用率) が入る。
+// status が rejected ならリミット到達。いちばん新しいものから今の 5時間枠のリセット時刻も分かる (枠は Claude Code と共通)
+export function scanCowork(sinceMs) {
+  const hits = [], weekly = [];
+  let current = null;
+  for (const file of walkJsonl(coworkDir(), sinceMs)) {
+    if (path.basename(file) !== "audit.jsonl") continue;
+    for (const line of lines(file)) {
+      if (!line.includes('"rate_limit_event"')) continue;
+      const ev = parseLine(line);
+      const info = ev?.rate_limit_info;
+      const ts = Date.parse(ev?._audit_timestamp);
+      if (ev?.type !== "rate_limit_event" || !info?.resetsAt || !Number.isFinite(ts) || ts < sinceMs) continue;
+      const reset = epochMs(+info.resetsAt);
+      if (!(reset > ts)) continue;
+      if (/^seven_day/.test(info.rateLimitType || "")) {
+        if (info.status === "rejected" && reset - ts <= WEEK_MS + HOUR) weekly.push({ ts, reset });
+        continue;
+      }
+      if (info.rateLimitType !== "five_hour" || reset - ts > WINDOW_MS + 15 * 60000) continue;
+      if (info.status === "rejected") hits.push({ ts, reset });
+      if (!current || ts > current.at) {
+        const pct = info.status === "rejected" ? 100 : Number.isFinite(info.utilization) ? Math.round(info.utilization * 100) : null;
+        current = { at: ts, resetAt: reset, pct };
+      }
+    }
+  }
+  return { hits, weekly, current };
 }
 
 // ---------- Codex ----------
@@ -405,6 +448,8 @@ function nextResets(claude, codex) {
   // ステータスラインの中継 (オンの人だけ) があれば、Claude Code も正確な使用率とリセット時刻
   const cu = readJson(CLAUDE_USAGE_FILE, null);
   if (cu?.five?.resetAt > now) out.claude = { resetAt: cu.five.resetAt, exact: true, pct: cu.five.pct, at: cu.at };
+  // Cowork のログにある今の枠 (正確なリセット時刻。使用率は 90% を超えたときなどにだけ入る)
+  else if (claude.current?.resetAt > now) out.claude = { resetAt: claude.current.resetAt, exact: true, pct: claude.current.pct, at: claude.current.at };
   else {
     const c = claudeWindowEnd([...claude.activity, ...claude.usage.map((u) => u.ts)], claude.hits);
     if (c.resetAt > now) out.claude = c;
@@ -471,6 +516,10 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
       try { setStatusline(r.statusline); log(`statusline relay ${r.statusline ? "on" : "off"}`); } catch (e) { log(`statusline: ${e.message}`); }
     }
     log(`sync ok (${reason}) windows=${payload.windows.length}`);
+    // すでに入れている人も、Cowork を使っていれば 5分ごとの送信を足す (1回だけ)
+    if (process.platform === "darwin" && !fs.existsSync(timerPlist()) && fs.existsSync(coworkDir()) && realpath(SELF) === realpath(INSTALLED_SCRIPT)) {
+      if (installTimer()) log("timer installed (cowork)");
+    }
     if (!quiet) console.log(L(`送信しました: ${payload.windows.length} 件。今日 ${r.today ?? "?"} / ${r.goal ?? "?"} 枠、${r.streak ?? 0} 日連続`, `Sent ${payload.windows.length} windows. Today ${r.today ?? "?"}/${r.goal ?? "?"}, ${r.streak ?? 0}-day streak`));
     return true;
   } catch (e) {
@@ -503,6 +552,37 @@ async function maybeUpdate() {
   fs.writeFileSync(tmp, body);
   fs.renameSync(tmp, INSTALLED_SCRIPT); // 置き換えは一瞬で済ませる (途中の状態を残さない)
   log(`updated ${VERSION} -> ${meta.version}`);
+}
+
+// ---------- timer (Mac) ----------
+// Cowork には hooks がないので、Mac では 5分ごとに自分で送る (launchd)。ログイン中ずっと動き、スリープ中は止まる
+const TIMER_LABEL = "world.ratelimit.sync";
+const timerPlist = () => path.join(os.homedir(), "Library", "LaunchAgents", `${TIMER_LABEL}.plist`);
+
+function installTimer() {
+  if (process.platform !== "darwin") return false;
+  const xml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${TIMER_LABEL}</string>
+  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(INSTALLED_SCRIPT)}</string><string>sync</string><string>--quiet</string><string>--reason</string><string>timer</string></array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>StandardInPath</key><string>/dev/null</string>
+</dict></plist>
+`;
+  fs.mkdirSync(path.dirname(timerPlist()), { recursive: true });
+  fs.writeFileSync(timerPlist(), plist);
+  const uid = String(process.getuid());
+  try { execFileSync("launchctl", ["bootout", `gui/${uid}/${TIMER_LABEL}`], { stdio: "ignore" }); } catch {}
+  try { execFileSync("launchctl", ["bootstrap", `gui/${uid}`, timerPlist()], { stdio: "ignore" }); } catch (e) { log(`timer: ${e.message}`); }
+  return true;
+}
+
+function removeTimer() {
+  if (process.platform !== "darwin") return;
+  try { execFileSync("launchctl", ["bootout", `gui/${process.getuid()}/${TIMER_LABEL}`], { stdio: "ignore" }); } catch {}
+  fs.rmSync(timerPlist(), { force: true });
 }
 
 // ---------- hooks ----------
@@ -784,6 +864,7 @@ async function setup(server) {
 
   const c = installClaudeHooks();
   console.log(L(`✅ Claude Code の hooks を登録しました (${c})`, `✅ Added Claude Code hooks (${c})`));
+  if (installTimer()) console.log(L("✅ 5分ごとに自動で送る設定をしました (Cowork など hooks のないアプリ用)", "✅ Set up a sync every 5 minutes (for apps without hooks, like Cowork)"));
   try {
     const x = installCodexNotify(cfg);
     if (x) console.log(L(`✅ Codex の notify を登録しました (${x})${cfg.prevCodexNotify ? "。元の notify も引き続き呼ばれます" : ""}`, `✅ Added Codex notify (${x})${cfg.prevCodexNotify ? ". Your existing notify still runs" : ""}`));
@@ -829,6 +910,7 @@ function uninstall() {
   const cfg = loadConfig();
   removeClaudeHooks();
   removeCodexNotify(cfg);
+  removeTimer();
   fs.rmSync(HOME, { recursive: true, force: true });
   console.log(L("hooks / notify を外し、~/.ratelimit-world を削除しました", "Removed the hooks / notify and deleted ~/.ratelimit-world"));
 }
