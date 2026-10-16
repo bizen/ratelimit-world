@@ -311,6 +311,7 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
 
 <section class="row share">
   <a class="btn ghost" href="/@${esc(user.login)}">${t("dash.profile")}</a>
+  <a class="btn ghost" href="/welcome">${t("dash.redo")}</a>
   <form method="post" action="/logout"><button class="btn ghost">${t("dash.logout")}</button></form>
 </section>`,
   });

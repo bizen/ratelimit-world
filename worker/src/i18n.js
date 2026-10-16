@@ -147,6 +147,7 @@ export const T = {
     "settings.public": "プロフィールを公開してランキングに参加する",
     "settings.save": "設定を保存",
     "dash.profile": "公開プロフィール",
+    "dash.redo": "セットアップをやり直す",
     "dash.logout": "ログアウト",
 
     // オンボーディング
@@ -369,6 +370,7 @@ export const T = {
     "settings.public": "Make my profile public and join the leaderboard",
     "settings.save": "Save settings",
     "dash.profile": "Public profile",
+    "dash.redo": "Redo setup",
     "dash.logout": "Log out",
 
     "wel.title": "Welcome · ratelimit.world",
