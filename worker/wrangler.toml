@@ -3,11 +3,10 @@ main = "src/index.js"
 compatibility_date = "2026-09-01"
 
 # 正式なドメイン (Cloudflare が DNS レコードと証明書を自動で作る)。www は ratelimit.world へ移す
-# ratelimit.world に既存の A レコードがあると作れないので、消してから有効にする
-# routes = [
-#   { pattern = "ratelimit.world", custom_domain = true },
-#   { pattern = "www.ratelimit.world", custom_domain = true },
-# ]
+routes = [
+  { pattern = "ratelimit.world", custom_domain = true },
+  { pattern = "www.ratelimit.world", custom_domain = true },
+]
 # 移行が終わるまで、古いアドレス (PC の CLI の送り先) も使えるようにしておく
 workers_dev = true
 
