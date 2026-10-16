@@ -837,8 +837,7 @@ async function route(req, env) {
     try { await syncLeagues(env, user); } catch (e) { console.log("league sync", e.message); }
     const [s, friends, leagues] = await Promise.all([statsFor(env, user), friendsOf(env, user), leaguesFor(env, user)]);
     const flash = { kind: url.searchParams.get("friend"), who: url.searchParams.get("who") };
-    const written = await writtenTotal(env, user.id);
-    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user), friends, flash, leagues, written }));
+    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user), friends, flash, leagues }));
   }
   if (p.startsWith("/api/")) {
     if (!user) return json({ error: "unauthorized" }, 401);

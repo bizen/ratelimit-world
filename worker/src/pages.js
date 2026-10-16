@@ -279,23 +279,68 @@ function writtenHead(ctx, total) {
   <p class="wr-meta"><span>${t("wr.next", name(w.next), fmtTokens(lang, w.left))}</span><span>${t("wr.total", fmtTokens(lang, total))}</span></p>`;
 }
 
-function writtenCard(ctx, total) {
-  return `<section class="card written" id="written"><h2 class="h3">📚 ${ctx.t("wr.h")}</h2>${writtenHead(ctx, total)}</section>`;
-}
+// トークンロード (プロフィール): 今の段階とバー、それに「マップ」ボタン。
+// マップは下の俳句から上のアカシックレコードへ、くねくね登る道。登るほど空が夜から宇宙になる
+const ROAD_ICON = ["🍃", "🐦", "💌", "🎤", "🏃", "📜", "📕", "🐈", "⚔️", "🪄", "👮", "📖", "📚", "🐧", "🗣️", "🌐", "🏛️", "🌍", "🕸️", "💬", "✨"];
 
-// プロフィール: 段階のはしご。届いた段と次の段は名前を見せ、その先は名前を「？？？」にして必要なトークン数だけ見せる
-// (最後のアカシックレコードだけは名前も見せる)
-function writtenLadder(ctx, total) {
+function roadMap(ctx, total) {
   const { t, lang } = ctx;
   const w = writtenLevel(total);
-  const row = (state, name, tok) => `<li class="${state}"><span class="wr-mark" aria-hidden="true">${state === "done" ? "✓" : ""}</span><span class="wr-name">${name}</span><span class="wr-tok">${tok}</span></li>`;
-  const last = WRITTEN.length - 1;
-  const rows = WRITTEN.map(([key, tokens], i) => {
+  const n = WRITTEN.length, W = 340, ROW = 104, PAD = 70;
+  const H = (n - 1) * ROW + PAD * 2;
+  const pt = (i) => ({ x: W / 2 + 92 * Math.sin(i * 1.05), y: H - PAD - i * ROW });
+  // 道: 点と点を、上下にふくらむ曲線でつなぐ
+  let d = "";
+  for (let i = 0; i < n; i++) {
+    const p = pt(i);
+    if (!i) { d = `M${p.x.toFixed(1)} ${p.y}`; continue; }
+    const q = pt(i - 1), m = (p.y + q.y) / 2;
+    d += ` C${q.x.toFixed(1)} ${m} ${p.x.toFixed(1)} ${m} ${p.x.toFixed(1)} ${p.y}`;
+  }
+  // 届いたところまでの道は色を変える
+  const doneLen = w.reached >= 0 ? w.reached : -1;
+  let dDone = "";
+  for (let i = 0; i <= doneLen; i++) {
+    const p = pt(i);
+    if (!i) { dDone = `M${p.x.toFixed(1)} ${p.y}`; continue; }
+    const q = pt(i - 1), m = (p.y + q.y) / 2;
+    dDone += ` C${q.x.toFixed(1)} ${m} ${p.x.toFixed(1)} ${m} ${p.x.toFixed(1)} ${p.y}`;
+  }
+  const nodes = WRITTEN.map(([key, tokens], i) => {
+    const p = pt(i);
     const state = i <= w.reached ? "done" : i === w.next ? "next" : "ahead";
-    const name = state === "ahead" && i !== last ? t("wr.hidden") : esc(t(`w.${key}`));
-    return row(state, name, fmtTokens(lang, tokens));
-  }).reverse().join("");
-  return `<section class="card written"><h2 class="h3">📚 ${t("wr.h")}</h2>${writtenHead(ctx, total)}<ol class="wr-ladder">${rows}</ol><p class="muted small">${t("wr.note")}</p></section>`;
+    const shown = state !== "ahead" || i === n - 1;
+    const side = p.x > W / 2 ? "left" : "right";
+    return `<li class="rn ${state} ${side}" style="left:${((p.x / W) * 100).toFixed(2)}%;top:${p.y}px">
+      <span class="rn-dot" aria-hidden="true">${shown ? ROAD_ICON[i] : "？"}</span>
+      <span class="rn-label"><b>${shown ? esc(t(`w.${key}`)) : t("wr.hidden")}</b><small>${fmtTokens(lang, tokens)}</small></span>
+    </li>`;
+  }).join("");
+  // リミは「いまここ」: 届いた段から次の段へ向かう道の途中、進み具合のぶんだけ進んだところ
+  const a = pt(Math.max(0, w.reached)), b = pt(w.next), f = w.reached >= 0 ? w.pct / 100 : 0;
+  const here = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+  // 段の名前は道の外側に出るので、リミは名前と反対側に寄せる
+  const dx = a.x > W / 2 ? 66 : -66;
+  return `<div class="road" style="height:${H}px">
+    <svg class="road-path" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">
+      <path d="${d}" class="rp-all"/>${dDone ? `<path d="${dDone}" class="rp-done"/>` : ""}
+    </svg>
+    <ol class="rn-list">${nodes}</ol>
+    <div class="road-limi" style="left:calc(${((here.x / W) * 100).toFixed(2)}% + ${dx}px);top:${here.y}px" data-here aria-hidden="true"><span>${t("wr.here")}</span>${limi("happy")}</div>
+  </div>`;
+}
+
+function tokenRoad(ctx, total) {
+  const { t } = ctx;
+  return `<section class="card written">
+  <div class="wr-top"><h2 class="h3">🛣️ ${t("wr.h")}</h2><button class="btn ghost small" type="button" data-road-open>🗺 ${t("wr.map")}</button></div>
+  ${writtenHead(ctx, total)}
+  <dialog class="road-dialog" data-road aria-label="${esc(t("wr.h"))}">
+    <div class="road-bar"><b>🛣️ ${t("wr.h")}</b><button class="btn ghost small" type="button" data-road-close>${t("wr.close")}</button></div>
+    <div class="road-scroll">${roadMap(ctx, total)}</div>
+    <p class="road-note">${t("wr.note")}</p>
+  </dialog>
+</section>`;
 }
 
 // フレンド: 自分とフォローしている人を今週の XP 順に並べる。各行に 🔥連続・今日の枠・今の状況
@@ -603,7 +648,7 @@ function dial(ctx, tool, s, now) {
 </article>`;
 }
 
-export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = [], flash = null, leagues = null, written = 0 }) {
+export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = [], flash = null, leagues = null }) {
   const { user, t, lang } = ctx;
   const now = Date.now();
   const left = Math.max(0, s.goal - s.todayCount);
@@ -666,8 +711,6 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
 </section>
 
 ${leagueCards(ctx, leagues, s, now)}
-
-${writtenCard(ctx, written)}
 
 ${friendsCard(ctx, s, friends, flash, origin, now)}
 
@@ -876,7 +919,7 @@ ${self && !u.public ? `<p class="private-note" role="status">🔒 ${t("p.private
   ${todayTrack(ctx, s, Date.now())}
   ${heatmap(ctx, s)}
 </section>
-${social.written != null ? writtenLadder(ctx, social.written) : ""}
+${social.written != null ? tokenRoad(ctx, social.written) : ""}
 ${social.ps ? profileRecords(ctx, s, social.ps) : ""}
 ${u.public ? `<section class="card share-card">
   <img src="/@${esc(u.login)}/card.png?lang=${lang}" alt="${esc(t("prof.cardAlt", u.login))}" width="600" height="315">

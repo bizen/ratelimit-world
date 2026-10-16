@@ -57,6 +57,17 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
   }
   if ($(".dial")) { tick(); setInterval(tick, 1000); }
 
+  // トークンロードのマップ: 開いたら「いまここ」が見えるところまで送る。外側を押しても閉じる
+  const road = $("[data-road]");
+  if (road) {
+    $("[data-road-open]").addEventListener("click", () => {
+      road.showModal();
+      $("[data-here]", road)?.scrollIntoView({ block: "center" });
+    });
+    $("[data-road-close]", road).addEventListener("click", () => road.close());
+    road.addEventListener("click", (e) => { if (e.target === road) road.close(); });
+  }
+
   // 「今日のタスク」の開閉を覚えておく (閉じると 1行の要約だけになる)
   const tasks = $("[data-tasks]");
   if (tasks) {
