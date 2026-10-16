@@ -605,14 +605,6 @@ function findBin(name) {
   return null;
 }
 
-// 送らない時間帯か。'23:00-07:00' のように日をまたいでもよい
-export function inQuiet(quiet, d = new Date()) {
-  const m = /^(\d\d):(\d\d)-(\d\d):(\d\d)$/.exec(quiet || "");
-  if (!m) return false;
-  const now = d.getHours() * 60 + d.getMinutes(), a = +m[1] * 60 + +m[2], b = +m[3] * 60 + +m[4];
-  return a < b ? now >= a && now < b : now >= a || now < b;
-}
-
 function removeWarmup(tool) {
   if (process.platform !== "darwin") return;
   try { execFileSync("launchctl", ["bootout", `gui/${process.getuid()}/${warmupLabel(tool)}`], { stdio: "ignore" }); } catch {}
@@ -664,7 +656,6 @@ async function warmup(tool, resetAt) {
   };
   if (!WARMUP_TOOLS.includes(tool) || !(resetAt > 0)) return finish("bad arguments");
   if (!cfg.warmup?.on) return finish("off");
-  if (inQuiet(cfg.warmup.quiet)) return finish("quiet hours");
   if (Date.now() < resetAt) return finish("too early");
   // リセット後にもう使い始めていれば送らない (その時点で新しい枠は始まっている)
   const scan = tool === "claude" ? scanClaude(resetAt) : scanCodex(resetAt);

@@ -31,13 +31,3 @@ test("CLI reads Cowork rate limit events", async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("warm-up quiet hours, including overnight ranges", async () => {
-  const { inQuiet } = await import("../../cli/ratelimit-world.mjs");
-  const at = (h, m) => new Date(2026, 9, 17, h, m);
-  assert.equal(inQuiet(null, at(3, 0)), false);
-  assert.equal(inQuiet("01:00-07:00", at(3, 0)), true);
-  assert.equal(inQuiet("01:00-07:00", at(7, 0)), false);
-  assert.equal(inQuiet("23:00-07:00", at(23, 30)), true);
-  assert.equal(inQuiet("23:00-07:00", at(6, 59)), true);
-  assert.equal(inQuiet("23:00-07:00", at(12, 0)), false);
-});
