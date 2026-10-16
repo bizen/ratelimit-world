@@ -1,6 +1,6 @@
 // サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js、文言は i18n.js。
 // 各ページは ctx = { user, lang, t, path } を受け取る (t は翻訳関数)
-import { TOOL_NAME, addDays, localTime, comboXp, WINDOW_MS } from "./logic.js";
+import { TOOL_NAME, addDays, localTime, comboXp, moodOf, WINDOW_MS } from "./logic.js";
 import { clientStrings, tierName, fmtWhen } from "./i18n.js";
 
 // 課金プランの表示名。CLI が送ってくる値 → 人が読める名前 (固有名詞なので言語で変えない)
@@ -147,6 +147,53 @@ export function landing(ctx, origin) {
 }
 
 // ---------- dashboard ----------
+// キャラクター「リミ」: まるい体に小さな炎。表情 (目と口) だけを気分で変える
+function limi(mood) {
+  const eyes = {
+    neutral: `<circle cx="25" cy="34" r="4"/><circle cx="39" cy="34" r="4"/>`,
+    happy: `<path d="M21 35q4-5 8 0M35 35q4-5 8 0" fill="none" stroke-width="3" stroke-linecap="round"/>`,
+    cheer: `<path d="M21 35q4-5 8 0M35 35q4-5 8 0" fill="none" stroke-width="3" stroke-linecap="round"/>`,
+    excited: `<circle cx="25" cy="33" r="5"/><circle cx="39" cy="33" r="5"/><circle cx="26.5" cy="31.5" r="1.6" fill="#fff"/><circle cx="40.5" cy="31.5" r="1.6" fill="#fff"/>`,
+    sad: `<path d="M21 33q4 3 8 1M35 34q4 2 8-1" fill="none" stroke-width="3" stroke-linecap="round"/>`,
+    worried: `<circle cx="25" cy="35" r="3.5"/><circle cx="39" cy="35" r="3.5"/><path d="M20 28l8 2M44 28l-8 2" fill="none" stroke-width="2.5" stroke-linecap="round"/>`,
+  }[mood];
+  const mouth = {
+    neutral: `<path d="M27 43q5 4 10 0" fill="none" stroke-width="3" stroke-linecap="round"/>`,
+    happy: `<path d="M25 42q7 7 14 0" fill="none" stroke-width="3" stroke-linecap="round"/>`,
+    cheer: `<path d="M25 41q7 10 14 0z" stroke-width="2" stroke-linejoin="round"/>`,
+    excited: `<ellipse cx="32" cy="44" rx="4" ry="5"/>`,
+    sad: `<path d="M27 46q5-4 10 0" fill="none" stroke-width="3" stroke-linecap="round"/>`,
+    worried: `<path d="M28 45q4-2 8 0" fill="none" stroke-width="3" stroke-linecap="round"/>`,
+  }[mood];
+  const extra = mood === "sad" ? `<path d="M44 38q2 4 0 6q-2-2 0-6z" fill="#7FD3F7" stroke="none"/>`
+    : mood === "cheer" ? `<circle cx="8" cy="14" r="2.5" fill="#FF7A1A" stroke="none"/><circle cx="57" cy="10" r="2" fill="#16B364" stroke="none"/><circle cx="56" cy="24" r="2.5" fill="#36B9E8" stroke="none"/>`
+    : "";
+  return `<svg class="limi-svg" viewBox="0 0 64 64" aria-hidden="true">
+    <path class="flame" d="M32 4c5 6 8 9 8 14a8 8 0 0 1-16 0c0-3 2-5 3-7 1 3 3 4 4 4-1-4 0-8 1-11z"/>
+    <ellipse class="body" cx="32" cy="38" rx="24" ry="22"/>
+    <ellipse class="cheek" cx="18" cy="42" rx="4" ry="2.5"/><ellipse class="cheek" cx="46" cy="42" rx="4" ry="2.5"/>
+    <g class="face">${eyes}${mouth}</g>${extra}
+  </svg>`;
+}
+
+function mascot(ctx, s, now) {
+  const m = moodOf(s, now);
+  const tool = m.tool ? TOOL_NAME[m.tool] : "";
+  const text = ctx.t(`mood.${m.key}`, { n: m.n, m: m.m, left: m.left, tool });
+  return `<section class="mascot mood-${m.mood}" aria-label="${esc(ctx.t("mood.aria"))}"><div class="limi">${limi(m.mood)}</div><p class="bubble">${esc(text)}</p></section>`;
+}
+
+// デイリークエスト (今日の 3つ)
+function questList(ctx, s) {
+  return `<ul class="quests">${s.todayQuests.map((q) => `<li class="${q.done ? "done" : ""}">
+      <span class="q-check" aria-hidden="true">${q.done ? "✓" : ""}</span>
+      <span class="q-title">${esc(ctx.t(`q.${q.id}`, { n: q.target }))}</span>
+      <span class="q-val">${q.value}/${q.target}</span>
+      <span class="q-xp">+${q.xp}</span>
+      <i class="q-mini" style="--p:${Math.round((q.value / q.target) * 100)}%"></i>
+    </li>`).join("")}</ul>`;
+}
+
 // 直近7日のストリーク (Duolingo の丸の列): 達成🔥 / フリーズ🧊 / 週間リミット中🏆 / 未達 / 今日
 function weekStrip(ctx, s) {
   const { t, lang } = ctx;
@@ -418,13 +465,14 @@ export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify }) {
   ${s.trophies ? `<div class="stat trophy" title="${t("stat.trophies.tip")}"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
 </section>
 ${weekStrip(ctx, s)}
+${mascot(ctx, s, now)}
 ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title")}</b> ${s.weeklyLocks.map((w) => t("lock.item", w.tool, fmtWhen(lang, w.resetAt, s.tz))).join(t("lock.sep"))}${t("lock.tail")}</p></section>` : ""}
 
 <section class="card today" data-celebrate data-day="${s.today}" data-count="${s.todayCount}" data-tier="${esc(tier)}" data-last-xp="${s.todayWindows.at(-1)?.xp ?? 0}" data-record="${record ? 1 : ""}" data-goal-hit="${s.todayCount === s.goal ? 1 : ""}">
   <details class="tasks" open data-tasks>
   <summary class="today-head">
     <h1 class="h2">${t("tasks.h")}</h1>
-    <span class="brief" aria-hidden="true">🎯 ${s.todayCount}/${s.goal} · ⚡ ${s.todayResetsPassed ? `${s.todayQuick}/${s.todayResetsPassed}` : "—"} · +${s.todayXp} XP</span>
+    <span class="brief" aria-hidden="true">🎯 ${s.todayCount}/${s.goal} · ⚡ ${s.todayResetsPassed ? `${s.todayQuick}/${s.todayResetsPassed}` : "—"} · 🎁 ${s.todayQuests.filter((q) => q.done).length}/${s.todayQuests.length} · +${s.todayXp} XP</span>
     <p class="today-xp"><b>+${s.todayXp}</b> XP</p>
     <span class="chev" aria-hidden="true"></span>
   </summary>
@@ -444,6 +492,11 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
     ${quickTask(ctx, s, now)}
     <p class="late">${t("today.late", s.todayLateMin)}${s.quickRun > 0 ? ` · ${t("today.quick", s.quickRun)}` : ""}</p>
     <p class="warmup">💡 ${t("warmup.tip")} <span class="soon">${t("warmup.soon")}</span></p>
+  </div>
+
+  <div class="quest">
+    <div class="quest-head"><span class="q-icon" aria-hidden="true">🎁</span><b>${t("quest.daily")}</b><span class="q-prog">${s.todayQuests.filter((q) => q.done).length} / ${s.todayQuests.length}</span></div>
+    ${questList(ctx, s)}
   </div>
   </details>
 </section>

@@ -105,7 +105,7 @@ test("combo XP grows with each window in the same day", async () => {
   ];
   const s = computeStats(ws, { tz: TZ, goal: 2, now });
   assert.deepEqual(s.todayWindows.map((w) => w.xp), [150, 120, 150]);
-  assert.equal(s.todayXp, 420);
+  assert.equal(s.todayXp - s.todayQuestXp, 420);
   assert.deepEqual(s.tier, { key: "over" });
   assert.deepEqual(s.nextTier, { key: "beyond" });
   assert.equal(s.nextXp, 200);
@@ -142,7 +142,7 @@ test("weekly limit hit gives a big reward and protects the streak until reset", 
   assert.deepEqual(s.lockedDays, ["2026-10-15", "2026-10-16"]);
   assert.equal(s.freezes, 0);
   assert.equal(s.trophies, 1);
-  assert.equal(s.xp, 100 + 120 + 100 + 120 + WEEKLY_XP);
+  assert.equal(s.xp - s.questXp, 100 + 120 + 100 + 120 + WEEKLY_XP);
   assert.deepEqual(s.weeklyLocks, []);
   const s2 = computeStats(ws, { tz: TZ, goal: 2, now: jst("2026-10-16T10:00:00"), weekly });
   assert.equal(s2.weeklyLocks.length, 1);
@@ -219,4 +219,26 @@ test("quick-restart task lists today's resets with their delay", () => {
   const s2 = computeStats([win("codex", "2026-10-16T00:10:00", "2026-10-16T01:17:00", "2026-10-16T04:31:00")], { tz: TZ, goal: 2, now });
   assert.equal(s2.todayResets[0].rest, true);
   assert.equal(s2.todayResetsPassed, 0);
+});
+
+test("daily quests: three per day, stable per user and day, with progress", async () => {
+  const { questIdsFor, QUEST_XP } = await import("../src/logic.js");
+  assert.deepEqual(questIdsFor("u1", "2026-10-16"), questIdsFor("u1", "2026-10-16"));
+  assert.equal(new Set(questIdsFor("u1", "2026-10-16")).size, 3);
+  const now = jst("2026-10-16T20:00:00");
+  const ws = [
+    win("claude", "2026-10-16T08:00:00", "2026-10-16T10:00:00", "2026-10-16T10:02:00"),
+    win("codex", "2026-10-16T13:00:00", "2026-10-16T15:00:00", "2026-10-16T15:03:00"),
+  ];
+  // シードを変えて、各クエストの判定を確かめる
+  const all = {};
+  for (let i = 0; i < 60; i++) for (const q of computeStats(ws, { tz: TZ, goal: 2, now, seed: `s${i}` }).todayQuests) all[q.id] = q;
+  assert.equal(all.quick2.done, true);      // 2分・3分で再開
+  assert.equal(all.both.done, true);        // 両方のツール
+  assert.equal(all.noon.done, true);        // 8時に到達
+  assert.equal(all.late10.done, true);      // 出遅れ 5分
+  assert.equal(all.extra.done, false);      // 2枠 < 目標+1
+  assert.equal(all.quick15x3.value, 2);
+  const s = computeStats(ws, { tz: TZ, goal: 2, now, seed: "s1" });
+  assert.equal(s.todayQuestXp, s.todayQuests.filter((q) => q.done).length * QUEST_XP);
 });

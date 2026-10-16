@@ -8,6 +8,33 @@ export const QUICK_MS = 5 * MIN;        // これ以内に再開したら「即�
 export const CHASE_MS = 3 * HOUR;       // これより後の再開は出遅れではなく休憩とみなす
 export const MAX_FREEZES = 2;
 export const WEEKLY_XP = 1000;          // 週間リミットを使い切ったごほうび
+export const QUEST_XP = 50;             // デイリークエスト 1つのごほうび
+
+// デイリークエストの候補。毎日、人ごとに 3つ選ぶ。value(d) がその日の進み具合、target が目標
+// d: その日の集計 { count, claude, codex, quick, quick15, resets, late, beforeNoon }
+export const QUESTS = {
+  quick2: { target: () => 2, value: (d) => d.quick },
+  quick15x3: { target: () => 3, value: (d) => d.quick15 },
+  late10: { target: () => 1, value: (d) => (d.resets >= 1 && d.late <= 10 ? 1 : 0) },
+  both: { target: () => 2, value: (d) => (d.claude > 0 ? 1 : 0) + (d.codex > 0 ? 1 : 0) },
+  extra: { target: (goal) => goal + 1, value: (d) => d.count },
+  noon: { target: () => 1, value: (d) => (d.beforeNoon ? 1 : 0) },
+};
+const QUEST_IDS = Object.keys(QUESTS);
+
+// 同じ人・同じ日なら同じ 3つになるよう、文字列から決まった数を作る (FNV-1a)
+function hash(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+export function questIdsFor(seed, day) {
+  const ids = [...QUEST_IDS];
+  let h = hash(`${seed}:${day}`);
+  const out = [];
+  while (out.length < 3 && ids.length) { out.push(ids.splice(h % ids.length, 1)[0]); h = hash(String(h)); }
+  return out;
+}
 export const FREEZE_EVERY = 7;          // 7日連続ごとにフリーズを 1つもらえる
 
 export const TOOL_NAME = { claude: "Claude Code", codex: "Codex" };
@@ -96,7 +123,25 @@ export function xpOf(w, n = 1) {
 }
 
 // windows: [{tool, hit_at, reset_at, resumed_at}] / weekly: [{tool, hit_at, reset_at}] (週間リミットの到達)
-export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), weekly = [], sessions = [] } = {}) {
+// キャラクター「リミ」の気分: 今日の状況から表情と一言を決める
+export function moodOf(s, now) {
+  if (s.weeklyLocks?.length) return { mood: "cheer", key: "weekly" };
+  if (s.todayDone) return { mood: "cheer", key: "goal", n: s.streak };
+  const passed = (s.todayResets ?? []).filter((r) => r.passed && !r.rest);
+  const last = passed.at(-1);
+  if (last?.waiting) {
+    const m = Math.round((now - last.resetAt) / MIN);
+    return m <= 10 ? { mood: "excited", key: "go", tool: last.tool } : { mood: "sad", key: "waiting", m, tool: last.tool };
+  }
+  if (last && now - last.resetAt < 2 * HOUR) {
+    return last.quick ? { mood: "happy", key: "quick", m: last.ticket ? 0 : last.delayMin ?? 0 } : { mood: "sad", key: "late", m: last.delayMin ?? 0 };
+  }
+  const left = Math.max(0, s.goal - s.todayCount);
+  if (+localTime(now, s.tz).slice(0, 2) >= 20) return { mood: "worried", key: "pinch", left, n: s.streak };
+  return { mood: "neutral", key: "hello", left };
+}
+
+export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), weekly = [], sessions = [], seed = "" } = {}) {
   const ws = [...windows].sort((a, b) => a.hit_at - b.hit_at);
   const today = dayKey(now, tz);
   const thisWeek = weekKey(now, tz);
@@ -126,6 +171,41 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     days[k].xp += WEEKLY_XP;
     for (let d = k, end = dayKey(w.reset_at, tz); d <= end; d = addDays(d, 1)) locked.add(d);
   }
+  // デイリークエスト用の 1日ごとの集計 (再開の速さはリセットされた日で数える)
+  const qd = (k) => (qdays[k] ??= { count: days[k]?.count ?? 0, claude: days[k]?.claude ?? 0, codex: days[k]?.codex ?? 0, quick: 0, quick15: 0, resets: 0, late: 0, beforeNoon: false });
+  const qdays = {};
+  for (const w of ws) {
+    const hk = dayKey(w.hit_at, tz);
+    if (+localTime(w.hit_at, tz).slice(0, 2) < 12) qd(hk).beforeNoon = true;
+    if (w.reset_at > now) continue;
+    const d = w.resumed_at != null ? Math.max(0, w.resumed_at - w.reset_at) : now - w.reset_at;
+    if (!w.ended_at && d > CHASE_MS) continue; // 休憩扱い
+    const r = qd(dayKey(w.reset_at, tz));
+    r.resets++;
+    const done = w.ended_at || w.resumed_at != null;
+    if (w.ended_at || (done && d <= QUICK_MS)) r.quick++;
+    if (w.ended_at || (done && d <= 15 * MIN)) r.quick15++;
+    if (!w.ended_at) r.late += Math.round(d / MIN);
+  }
+  // 達成したクエストの XP を足す
+  const questsOf = (k) => questIdsFor(seed, k).map((id) => {
+    const q = QUESTS[id], d = qd(k);
+    const target = q.target(goal), value = Math.min(target, q.value(d));
+    return { id, value, target, done: value >= target, xp: QUEST_XP };
+  });
+  let questXp = 0;
+  for (const k of Object.keys(qdays)) {
+    const n = questsOf(k).filter((q) => q.done).length;
+    if (!n) continue;
+    const add = n * QUEST_XP;
+    questXp += add;
+    (days[k] ??= { count: 0, claude: 0, codex: 0, xp: 0, lateMin: 0 }).xp += add;
+    days[k].quests = n;
+    xp += add;
+    if (k >= thisWeek && k <= today) weekXp += add;
+  }
+  const todayQuests = questsOf(today);
+
   const met = (k) => (days[k]?.count ?? 0) >= goal;
 
   // ストリーク: 最初の記録日から昨日までをたどる。未達の日はフリーズがあれば自動で使う
@@ -228,6 +308,9 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     lastHitByTool: Object.fromEntries(["claude", "codex"].map((tool) => [tool, ws.filter((w) => w.tool === tool).at(-1)?.hit_at ?? null])),
     todayWindows,
     todayOpened,
+    todayQuests,
+    questXp,
+    todayQuestXp: (days[today]?.quests ?? 0) * QUEST_XP,
     todayResets,
     todayQuick: todayResets.filter((r) => r.passed && !r.rest && r.quick).length,
     todayResetsPassed: todayResets.filter((r) => r.passed && !r.rest).length,

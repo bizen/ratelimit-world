@@ -147,7 +147,7 @@ async function statsFor(env, user, now = Date.now()) {
   const [ws, weekly, sessions] = await Promise.all([userWindows(env, user.id), userWeekly(env, user.id), userSessions(env, user.id)]);
   let nextReset = {};
   try { nextReset = JSON.parse(user.next_reset || "{}"); } catch {}
-  return { ...computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly, sessions }), nextReset };
+  return { ...computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly, sessions, seed: user.id }), nextReset };
 }
 
 // 同じ通知を二度送らない。初めてなら true
