@@ -428,15 +428,7 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .ring .pct { font: 400 clamp(26px, 7.4vw, 34px)/1 var(--display); }
 .ring .left { font: 700 12px var(--mono); color: inherit; opacity: .8; margin-top: 4px; }
 .ring .left .clock { font: inherit; }
-.ring circle.marker { fill: var(--surface); stroke: var(--ink); stroke-width: 3; }
-.dial.race.behind .pct { color: var(--ember); }
-.race-legend { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 6px 0 0; font-size: 10.5px; font-weight: 700; opacity: .8; }
-.race-legend .k-time { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 2.5px solid currentColor; }
-.dial.tool-claude .ring circle.marker { fill: #D97757; stroke: #fff; }
-.dial.tool-claude.race.behind .pct { color: #FFE2A8; }
-.dial.tool-codex .ring circle.marker { fill: #fff; stroke: #0D0D0D; }
-.dial.tool-codex.race.behind .pct { color: #C2410C; }
-.dial { padding-left: 10px; padding-right: 10px; }
+.dial.tool-claude .dial.tool-codex .dial { padding-left: 10px; padding-right: 10px; }
 .dial-foot { margin-left: -10px; margin-right: -10px; padding-left: 12px; padding-right: 12px; }
 
 /* ヘッダー: by bizencore */
@@ -515,3 +507,29 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .slot.split .half { width: 100%; }
 .slot.split .half:first-child { border-radius: 14px 14px 0 0; }
 .slot.split .half:last-child { border-radius: 0 0 14px 14px; }
+
+/* ペースの一文: 間に合う = 緑 / 余る = オレンジ */
+.dial-sub.pace-ok { color: var(--go); font-weight: 700; }
+.dial-sub.pace-short { color: var(--ember); font-weight: 700; }
+.dial.tool-claude .dial-sub.pace-ok { color: #fff; }
+.dial.tool-claude .dial-sub.pace-short { color: #FFE2A8; }
+.dial.tool-codex .dial-sub.pace-ok { color: #12804A; }
+.dial.tool-codex .dial-sub.pace-short { color: #C2410C; }
+
+/* 今日のタスク: 折りたたみ。閉じているときは 1行の要約 */
+.tasks > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tasks > summary::-webkit-details-marker { display: none; }
+.tasks > summary .h2 { margin: 0; }
+.tasks .brief { display: none; font: 700 14px var(--mono); color: var(--muted); }
+.tasks:not([open]) .brief { display: inline; }
+.tasks > summary .today-xp { margin-left: auto; }
+.tasks .chev { width: 10px; height: 10px; border-right: 2.5px solid var(--muted); border-bottom: 2.5px solid var(--muted); transform: rotate(45deg); margin: -4px 4px 0 2px; transition: transform .2s; }
+.tasks:not([open]) .chev { transform: rotate(-45deg); margin-top: 0; }
+/* 閉じているときは XP も要約に入れて 1行に収める */
+.tasks:not([open]) > summary { flex-wrap: nowrap; }
+.tasks:not([open]) > summary .today-xp { display: none; }
+.tasks:not([open]) > summary .h2 { font-size: 18px; white-space: nowrap; }
+.tasks .brief { white-space: nowrap; margin-left: auto; font-size: 13px; }
+.tasks:not([open]) > summary { gap: 8px; }
+.tasks:not([open]) .brief { font-size: 12px; }
+.tasks .chev { flex: none; }

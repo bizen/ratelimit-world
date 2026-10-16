@@ -27,22 +27,16 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       const h = Math.floor(left / 3600000), m = Math.floor(left / 60000) % 60, s = Math.floor(left / 1000) % 60;
       // 週間リミットのように 1日以上先なら「3日 13時間」で見せる
       clock.textContent = h >= 24 ? T("c.days", { d: Math.floor(h / 24), h: h % 24 }) : `${h}:${pad(m)}:${pad(s)}`;
-      // 使用率が分かるとき: 点 = 時間の経過。塗り (使用率) が点より先なら ahead
+      // 使用率が分かるとき: このペースでリセット前に使い切れるかを下の一文で更新する
       if (d.dataset.start && d.dataset.pct) {
         const start = +d.dataset.start, pct = +d.dataset.pct;
-        const elapsed = Math.min(1, Math.max(0, (now - start) / WINDOW_MS));
-        const mk = $(".marker", d);
-        if (mk) {
-          const a = elapsed * 2 * Math.PI - Math.PI / 2;
-          mk.setAttribute("cx", (60 + 52 * Math.cos(a)).toFixed(1));
-          mk.setAttribute("cy", (60 + 52 * Math.sin(a)).toFixed(1));
-        }
-        d.classList.toggle("ahead", pct >= elapsed * 100);
-        d.classList.toggle("behind", pct < elapsed * 100);
         if (d.classList.contains("using") && pct > 0) {
           const at = start + ((now - start) * 100) / pct;
           const hm = (ms) => new Intl.DateTimeFormat("en-GB", { timeZone: d.dataset.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(ms));
-          $(".dial-sub", d).textContent = at <= reset ? T("c.paceMax", { t: hm(at) }) : T("c.paceShort", { p: Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
+          const sub = $(".dial-sub", d);
+          sub.textContent = at <= reset ? T("c.paceMax", { t: hm(at) }) : T("c.paceShort", { p: Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
+          sub.classList.toggle("pace-ok", at <= reset);
+          sub.classList.toggle("pace-short", at > reset);
         }
       } else if (d.classList.contains("limited") || d.classList.contains("using")) {
         const fill = $(".fill", d);
@@ -55,6 +49,13 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
     }
   }
   if ($(".dial")) { tick(); setInterval(tick, 1000); }
+
+  // 「今日のタスク」の開閉を覚えておく (閉じると 1行の要約だけになる)
+  const tasks = $("[data-tasks]");
+  if (tasks) {
+    try { if (localStorage.getItem("rw:tasksOpen") === "0") tasks.open = false; } catch {}
+    tasks.addEventListener("toggle", () => { try { localStorage.setItem("rw:tasksOpen", tasks.open ? "1" : "0"); } catch {} });
+  }
 
   // 開きっぱなしでも新しい記録が出るよう、見えているときだけ数分おきに読み直す
   if (document.body.classList.contains("dash")) {
