@@ -485,3 +485,24 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .warmup { margin: 8px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--violet-soft); font-size: 13px; }
 .warmup .soon { font: 700 11px var(--body); color: #fff; background: var(--muted); border-radius: 999px; padding: 1px 8px; margin-left: 4px; white-space: nowrap; }
 .resets .rest { opacity: .55; }
+
+/* 使い切った枠はツールの色 (Claude Code = オレンジ、Codex = 白) */
+.slot.done.tool-claude { background: #D97757; color: #fff; border: 0; box-shadow: 0 4px 0 #B3562F; }
+.slot.done.tool-codex { background: #fff; color: #0D0D0D; border: 2px solid #E3E3E3; box-shadow: 0 4px 0 #E3E3E3; }
+
+/* 次に使い切る枠: 上下 2段 (使い切りやすい方が上)。各段はそのツールの色で、使用率の分だけ塗る */
+.slot.next.split { padding: 0; gap: 0; overflow: visible; align-content: stretch; grid-template-rows: 1fr 1fr; min-height: 92px; border: 2px solid var(--violet); animation: none; }
+.slot.split .half { position: relative; display: grid; justify-items: center; align-content: center; padding: 2px; overflow: hidden; }
+.slot.split .half + .half { border-top: 2px solid var(--violet); }
+.slot.split .half::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--p); z-index: 0; }
+.slot.split .half > * { position: relative; z-index: 1; }
+.slot.split .half .tool { font-size: 9.5px; font-weight: 700; }
+.slot.split .half b { font: 700 12px var(--mono); }
+.slot.split .half.tool-claude { background: #FBE7DD; color: #9A3F1E; }
+.slot.split .half.tool-claude::before { background: #F2B597; }
+.slot.split .half.tool-codex { background: #fff; color: #0D0D0D; }
+.slot.split .half.tool-codex::before { background: #E4E4E4; }
+.slot.split .half.locked { opacity: .6; }
+.slot.split.goal::after { z-index: 2; }
+.slot.split .half:first-child { border-radius: 13px 13px 0 0; }
+.slot.split .half:last-child { border-radius: 0 0 13px 13px; }

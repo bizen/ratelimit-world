@@ -204,15 +204,34 @@ function todayTrack(ctx, s, now) {
     const w = s.todayWindows[i - 1];
     const goalMark = i === s.goal ? ` goal" data-goal-label="${t("slot.goal")}` : "";
     if (w) {
-      out += `<li class="slot done${goalMark}" style="--i:${i}" data-n="${i}">
+      out += `<li class="slot done tool-${w.tool}${goalMark}" style="--i:${i}" data-n="${i}">
         <b>${i}</b><span class="tool">${w.tool === "claude" ? "Claude" : "Codex"}</span><span class="xp">+${w.xp}</span></li>`;
     } else if (i === n + 1) {
-      out += `<li class="slot next${goalMark}" style="--i:${i}"><b>${i}</b><span class="tool">${nextLabel}</span><span class="xp">+${comboXp(i)}</span></li>`;
+      out += nextSlot(ctx, s, now, i, goalMark, nextLabel);
     } else {
       out += `<li class="slot${goalMark}" style="--i:${i}"><b>${i}</b><span class="xp">+${comboXp(i)}</span></li>`;
     }
   }
   return `<ol class="track" aria-label="${t("today.track")}">${out}</ol>`;
+}
+
+// 次に使い切る枠: どちらのツールで達成するかはまだ分からないので、上下 2段に分けて
+// それぞれの今の使用率を出す。使い切りやすい方 (使用率が高い方) を上、リミット中で使えない方は下
+function nextSlot(ctx, s, now, i, goalMark, nextLabel) {
+  const halves = ["claude", "codex"].map((tool) => {
+    const lim = s.tools[tool]?.state === "limited" && s.tools[tool].resetAt > now ? s.tools[tool].resetAt : null;
+    const cur = s.nextReset?.[tool];
+    const pct = lim ? null : cur?.resetAt > now ? cur.pct ?? null : 0;
+    return { tool, lim, pct, known: lim != null || pct != null };
+  });
+  // 並び: 使えるもの (使用率が高い順) → 使用率不明 → リミット中
+  const rank = (h) => (h.lim ? -2 : h.pct == null ? -1 : h.pct);
+  halves.sort((a, b) => rank(b) - rank(a));
+  const half = (h) => `<div class="half tool-${h.tool} ${h.lim ? "locked" : ""}" style="--p:${h.pct ?? 0}%">
+      <span class="tool">${h.tool === "claude" ? "Claude" : "Codex"}</span>
+      <b>${h.lim ? ctx.t("slot.at", localTime(h.lim, s.tz)) : h.pct == null ? "—" : `${Math.round(h.pct)}%`}</b>
+    </div>`;
+  return `<li class="slot next split${goalMark}" style="--i:${i}" title="${esc(nextLabel)} · +${comboXp(i)} XP">${halves.map(half).join("")}</li>`;
 }
 
 // 「リセット後すぐ再開」タスク: 今日のリセットごとに、再開までの時間
