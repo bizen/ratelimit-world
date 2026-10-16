@@ -620,3 +620,28 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .q-xp { font: 700 12px var(--mono); color: var(--ember); }
 .q-mini { position: absolute; left: 10px; right: 10px; bottom: 5px; height: 3px; border-radius: 2px; background: var(--line); }
 .q-mini::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--p); border-radius: 2px; background: var(--go); }
+
+/* フレンド */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.fr-list { margin-top: 8px; }
+.fr-list li { grid-template-columns: 26px 32px 1fr auto; }
+.fr-list li:first-child { border-top: 0; }
+.fr-main { min-width: 0; display: grid; }
+.fr-main a { font-size: 15px; }
+.fr-you { font: 700 11px var(--body); color: var(--violet); }
+.fr-sub { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.fr-flame { color: var(--ember); font-weight: 700; }
+.fr-st { display: inline-block; margin-left: 2px; font-size: 11.5px; font-weight: 700; }
+.fr-st.go { color: var(--go); }
+.fr-st.lim { color: var(--muted); }
+.follow-form { display: flex; gap: 8px; margin: 14px 0 6px; }
+.follow-form input { flex: 1; min-width: 0; }
+.fr-flash { margin: 8px 0 0; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--go) 14%, transparent); font-weight: 700; font-size: 14px; }
+.fr-flash.bad { background: color-mix(in srgb, var(--ember) 14%, transparent); }
+.fr-flash .link { padding: 0; color: inherit; font-size: inherit; }
+.profile-head .ph-main { flex: 1; min-width: 0; }
+.profile-head form { margin: 0; }
+/* 「フォロー中 ✓」は、カーソルを当てると押したときの動作「フォローをやめる」に変わる */
+.btn.following .off, .btn.following:is(:hover, :focus-visible) .on { display: none; }
+.btn.following:is(:hover, :focus-visible) .off { display: inline; }
+.fr-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; }

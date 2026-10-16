@@ -183,6 +183,46 @@ function mascot(ctx, s, now) {
   return `<section class="mascot mood-${m.mood}" aria-label="${esc(ctx.t("mood.aria"))}"><div class="limi">${limi(m.mood)}</div><p class="bubble">${esc(text)}</p></section>`;
 }
 
+// フレンド: 自分とフォローしている人を今週の XP 順に並べる。各行に 🔥連続・今日の枠・今の状況
+function friendStatus(ctx, s, now) {
+  const waiting = (s.todayResets ?? []).filter((r) => r.passed && r.waiting && !r.rest).at(-1);
+  if (waiting) return `<span class="fr-st go">${ctx.t("fr.waiting", Math.round((now - waiting.resetAt) / 60000))}</span>`;
+  if (Object.values(s.tools).some((x) => x.state === "limited" && x.resetAt > now)) return `<span class="fr-st lim">${ctx.t("fr.limited")}</span>`;
+  return "";
+}
+
+function friendsCard(ctx, s, friends, flash, origin, now) {
+  const { user, t } = ctx;
+  const rows = [{ u: user, s, me: true }, ...friends].sort((a, b) => b.s.weekXp - a.s.weekXp);
+  const row = (r, i) => `<li class="${r.me ? "you" : ""}">
+      <span class="rank">${i + 1}</span>
+      ${r.u.avatar_url ? `<img src="${esc(r.u.avatar_url)}" alt="">` : `<span class="noav"></span>`}
+      <div class="fr-main">
+        <span class="fr-name"><a href="/@${esc(r.u.login)}">@${esc(r.u.login)}</a>${r.me ? ` <small class="fr-you">${t("fr.you")}</small>` : ""}</span>
+        <span class="fr-sub"><span class="fr-flame">🔥${r.s.streak}</span> · ${t("fr.today", r.s.todayCount, r.s.goal)}${r.s.todayDone ? " ✓" : ""} ${friendStatus(ctx, r.s, now)}</span>
+      </div>
+      <b>${r.s.weekXp.toLocaleString()} XP</b>
+    </li>`;
+  const who = esc(flash?.who || "");
+  const msg = {
+    added: t("fr.added", who), removed: t("fr.removed", who), self: t("fr.self"), full: t("fr.full"),
+    notfound: `${t("fr.notfound", who)} <button class="link" data-copy-text="${esc(origin)}">${t("fr.invite")}</button>`,
+  }[flash?.kind];
+  return `<section class="card friends" id="friends">
+  <h2 class="h3">${t("fr.h")}</h2>
+  ${msg ? `<p class="fr-flash ${flash.kind === "notfound" || flash.kind === "full" || flash.kind === "self" ? "bad" : ""}" role="status">${msg}</p>` : ""}
+  <ol class="board fr-list">${rows.map(row).join("")}</ol>
+  ${friends.length ? "" : `<p class="muted small">${t("fr.empty")}</p>`}
+  <form class="follow-form" method="post" action="/follow">
+    <input type="hidden" name="next" value="/me">
+    <label class="sr-only" for="fr-login">${t("fr.label")}</label>
+    <input id="fr-login" name="login" placeholder="${esc(t("fr.placeholder"))}" required maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="btn">${t("fr.follow")}</button>
+  </form>
+  <p class="muted small">${t("fr.note")}</p>
+</section>`;
+}
+
 // デイリークエスト (今日の 3つ)
 function questList(ctx, s) {
   return `<ul class="quests">${s.todayQuests.map((q) => `<li class="${q.done ? "done" : ""}">
@@ -445,7 +485,7 @@ function dial(ctx, tool, s, now) {
 </article>`;
 }
 
-export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify }) {
+export function dashboard(ctx, s, { origin, vapidKey, hasCli, notify, friends = [], flash = null }) {
   const { user, t, lang } = ctx;
   const now = Date.now();
   const left = Math.max(0, s.goal - s.todayCount);
@@ -506,6 +546,8 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
   ${dial(ctx, "claude", s, now)}
   ${dial(ctx, "codex", s, now)}
 </section>
+
+${friendsCard(ctx, s, friends, flash, origin, now)}
 
 <section class="card">
   <h2 class="h3">${t("heat.h")}</h2>
@@ -630,8 +672,15 @@ export function welcome(ctx, { origin, vapidKey }) {
 }
 
 // ---------- profile / leaderboard ----------
-export function profile(ctx, u, s, origin) {
-  const { t, lang } = ctx;
+export function profile(ctx, u, s, origin, social = {}) {
+  const { t, lang, user: viewer } = ctx;
+  const self = viewer?.id === u.id;
+  // フォローボタン: ログインしていなければログインへ、フォロー中なら押すと解除
+  const followBtn = self ? "" : !viewer
+    ? `<a class="btn" href="/login?next=${encodeURIComponent(`/@${u.login}`)}">${t("fr.follow")}</a>`
+    : `<form method="post" action="/follow"><input type="hidden" name="login" value="${esc(u.login)}"><input type="hidden" name="next" value="/@${esc(u.login)}">
+        <input type="hidden" name="action" value="${social.following ? "unfollow" : "follow"}">
+        <button class="btn ${social.following ? "ghost following" : ""}">${social.following ? `<span class="on">${t("fr.following")}</span><span class="off">${t("fr.unfollow")}</span>` : t("fr.follow")}</button></form>`;
   const url = `${origin}/@${u.login}`;
   const tier = tierName(lang, s.tier);
   return layout(ctx, {
@@ -640,8 +689,11 @@ export function profile(ctx, u, s, origin) {
     body: `
 <section class="profile-head">
   ${u.avatar_url ? `<img class="avatar" src="${esc(u.avatar_url)}" alt="">` : ""}
-  <div><h1 class="h2">@${esc(u.login)}</h1>${u.name && u.name !== u.login ? `<p class="muted">${esc(u.name)}</p>` : ""}<p class="plans">${planBadges(ctx, u)}</p></div>
+  <div class="ph-main"><h1 class="h2">@${esc(u.login)}</h1>${u.name && u.name !== u.login ? `<p class="muted">${esc(u.name)}</p>` : ""}<p class="plans">${planBadges(ctx, u)}</p>
+    <p class="muted small">${t("fr.followers", social.followers ?? 0)}</p></div>
+  ${followBtn}
 </section>
+${social.flash === "added" ? `<p class="fr-flash" role="status">${t("fr.added", esc(u.login))} <a href="/me#friends">${t("fr.seeAll")}</a></p>` : ""}
 <section class="stats-row">
   <div class="stat flame"><b>${s.streak}</b><span>${t("stat.streak")}</span></div>
   <div class="stat"><b>${s.bestStreak}</b><span>${t("stat.best")}</span></div>

@@ -150,6 +150,42 @@ async function statsFor(env, user, now = Date.now()) {
   return { ...computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly, sessions, seed: user.id }), nextReset };
 }
 
+// ---------- friends ----------
+const MAX_FOLLOWS = 100;
+
+// フォローしている人 (プロフィールを公開している人だけ) と、それぞれの今の記録
+async function friendsOf(env, user, now = Date.now()) {
+  const { results } = await env.DB.prepare(
+    "SELECT u.* FROM follows f JOIN users u ON u.id = f.followee_id WHERE f.follower_id = ? AND u.public = 1 ORDER BY f.created_at LIMIT ?",
+  ).bind(user.id, MAX_FOLLOWS).all();
+  return Promise.all(results.map(async (u) => ({ u, s: await statsFor(env, u, now) })));
+}
+
+// フォロー / フォロー解除 (フォームの POST)。終わったら元のページに戻り、結果を ?friend= で伝える
+async function follow(req, env, user) {
+  const f = await req.formData();
+  const login = String(f.get("login") || "").trim().replace(/^@/, "");
+  const unfollow = f.get("action") === "unfollow";
+  const back = (result) => {
+    const u = new URL(safeNext(String(f.get("next") || "")), "https://x");
+    u.searchParams.set("friend", result);
+    u.searchParams.set("who", login.slice(0, 39));
+    return redirect(`${u.pathname}${u.search}${u.pathname === "/me" ? "#friends" : ""}`);
+  };
+  if (!/^[\w-]{1,39}$/.test(login)) return back("notfound");
+  const target = await env.DB.prepare("SELECT id, public FROM users WHERE login = ?").bind(login).first();
+  if (target?.id === user.id) return back("self");
+  if (unfollow) {
+    if (target) await env.DB.prepare("DELETE FROM follows WHERE follower_id = ? AND followee_id = ?").bind(user.id, target.id).run();
+    return back("removed");
+  }
+  if (!target || !target.public) return back("notfound");
+  const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM follows WHERE follower_id = ?").bind(user.id).first();
+  if (n.n >= MAX_FOLLOWS) return back("full");
+  await env.DB.prepare("INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)").bind(user.id, target.id, Date.now()).run();
+  return back("added");
+}
+
 // 同じ通知を二度送らない。初めてなら true
 async function claim(env, userId, key) {
   const r = await env.DB.prepare("INSERT OR IGNORE INTO sent (user_id, key, at) VALUES (?, ?, ?)").bind(userId, key, Date.now()).run();
@@ -653,10 +689,20 @@ async function route(req, env) {
       return new Response(pages.card({ ...ctx, lang: cl, t: tr(cl) }, u, await statsFor(env, u)), { headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=300" } });
     }
     if (!visible) return html(pages.message(ctx, ctx.t("err.profile.title"), ctx.t("err.profile.text")), 404);
-    return html(pages.profile(ctx, u, await statsFor(env, u), origin));
+    const [followers, following] = await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) AS n FROM follows WHERE followee_id = ?").bind(u.id).first(),
+      user && user.id !== u.id ? env.DB.prepare("SELECT 1 AS y FROM follows WHERE follower_id = ? AND followee_id = ?").bind(user.id, u.id).first() : null,
+    ]);
+    const social = { followers: followers.n, following: !!following, flash: url.searchParams.get("friend") };
+    return html(pages.profile(ctx, u, await statsFor(env, u), origin, social));
   }
 
   // ここから先はログインが必要
+  if (p === "/follow" && m === "POST") {
+    if (!user) return redirect("/login?next=/me");
+    if (!sameOrigin(req)) return json({ error: "forbidden" }, 403);
+    return follow(req, env, user);
+  }
   if (p === "/cli/verify") {
     if (!user) return redirect(`/login?next=${encodeURIComponent(p + url.search)}`);
     return cliVerify(req, env, ctx);
@@ -669,7 +715,9 @@ async function route(req, env) {
     if (!user) return redirect("/login?next=/me");
     if (!user.onboarded_at) return redirect("/welcome");
     const hasCli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
-    return html(pages.dashboard(ctx, await statsFor(env, user), { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user) }));
+    const [s, friends] = await Promise.all([statsFor(env, user), friendsOf(env, user)]);
+    const flash = { kind: url.searchParams.get("friend"), who: url.searchParams.get("who") };
+    return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user), friends, flash }));
   }
   if (p.startsWith("/api/")) {
     if (!user) return json({ error: "unauthorized" }, 401);

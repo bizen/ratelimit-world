@@ -98,3 +98,12 @@ CREATE TABLE IF NOT EXISTS sent (
   at INTEGER NOT NULL,
   PRIMARY KEY (user_id, key)
 );
+
+-- フレンド (一方向のフォロー)。フォローできるのはプロフィールを公開している人だけ
+CREATE TABLE IF NOT EXISTS follows (
+  follower_id INTEGER NOT NULL,
+  followee_id INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (follower_id, followee_id)
+);
+CREATE INDEX IF NOT EXISTS follows_followee ON follows (followee_id);
