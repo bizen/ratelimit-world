@@ -645,3 +645,16 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .btn.following .off, .btn.following:is(:hover, :focus-visible) .on { display: none; }
 .btn.following:is(:hover, :focus-visible) .off { display: inline; }
 .fr-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+
+/* プロフィールの記録 */
+.ptiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 10px 0 0; }
+.ptile { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 14px; background: var(--paper); }
+.ptile dd { order: 1; margin: 0; font: 400 22px/1.15 var(--display); overflow-wrap: anywhere; }
+.ptile dd.sm { font-size: 18px; line-height: 1.4; }
+.ptile dt { order: 2; font-weight: 700; font-size: 13px; }
+.ptile small { order: 3; color: var(--muted); font-size: 12px; font-weight: 600; }
+.hours { display: grid; grid-template-columns: repeat(24, 1fr); align-items: end; gap: 3px; height: 96px; margin-top: 12px; }
+.hours i { height: max(3px, var(--h)); border-radius: 3px 3px 1px 1px; background: color-mix(in srgb, var(--violet) 45%, var(--line)); }
+.hours i.top { background: var(--ember); }
+.hours-axis { display: flex; justify-content: space-between; font: 700 11px var(--mono); color: var(--muted); margin-top: 4px; }
+.private-note { margin: 12px 0; padding: 10px 14px; border-radius: 12px; background: var(--violet-soft); font-weight: 700; font-size: 14px; }

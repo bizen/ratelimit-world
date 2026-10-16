@@ -335,3 +335,56 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     lastReset,
   };
 }
+
+// プロフィールに出す、これまでの全記録からの集計 (今ある記録を数え直すだけ)
+// ws: 使い切った枠 (全期間) / opened: 開けた枠 [{start_at}] / s: 同じ ws の computeStats
+export function profileStats(ws, opened, s, { tz = "UTC", now = Date.now() } = {}) {
+  const sorted = [...ws].sort((a, b) => a.hit_at - b.hit_at);
+  // 1日の最多 (今日も含める)
+  let bestDay = null;
+  for (const [day, d] of Object.entries(s.days)) if (d.count > 0 && (!bestDay || d.count > bestDay.count)) bestDay = { count: d.count, day };
+  // 1日に開いた枠の最多
+  const openedByDay = {};
+  for (const o of opened) { const k = dayKey(o.start_at, tz); openedByDay[k] = (openedByDay[k] ?? 0) + 1; }
+  let bestOpened = null;
+  for (const [day, n] of Object.entries(openedByDay)) if (!bestOpened || n > bestOpened.count) bestOpened = { count: n, day };
+  // 最高の週 (XP)
+  const weeks = {};
+  for (const [day, d] of Object.entries(s.days)) { const k = addDays(day, -((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7)); weeks[k] = (weeks[k] ?? 0) + d.xp; }
+  let bestWeek = null;
+  for (const [week, xp] of Object.entries(weeks)) if (xp > 0 && (!bestWeek || xp > bestWeek.xp)) bestWeek = { xp, week };
+  // リセット後の再開: 即スタート率・出遅れ・即スタートの最長連続
+  const delays = [];
+  let run = 0, bestQuickRun = 0;
+  for (const w of sorted) {
+    if (w.reset_at > now) continue;
+    const d = delayOf(w);
+    if (d == null) continue;
+    delays.push(d);
+    run = d <= QUICK_MS ? run + 1 : 0;
+    bestQuickRun = Math.max(bestQuickRun, run);
+  }
+  const quick = delays.filter((d) => d <= QUICK_MS).length;
+  const med = [...delays].sort((a, b) => a - b)[Math.floor((delays.length - 1) / 2)];
+  // よく使い切る時間帯と曜日
+  const hours = Array(24).fill(0), weekdays = Array(7).fill(0);
+  for (const w of sorted) {
+    hours[+localTime(w.hit_at, tz).slice(0, 2)]++;
+    weekdays[(new Date(`${dayKey(w.hit_at, tz)}T00:00:00Z`).getUTCDay() + 6) % 7]++;
+  }
+  const argmax = (a) => (a.some((n) => n > 0) ? a.indexOf(Math.max(...a)) : null);
+  const active = Object.values(s.days).filter((d) => d.count > 0);
+  return {
+    bestDay, bestOpened, bestWeek, bestQuickRun,
+    byTool: { claude: sorted.filter((w) => w.tool === "claude").length, codex: sorted.filter((w) => w.tool === "codex").length },
+    activeDays: active.length,
+    goalDays: active.filter((d) => d.count >= s.goal).length,
+    restarts: delays.length,
+    quick,
+    quickRate: delays.length ? Math.round((quick / delays.length) * 100) : null,
+    medianLateMin: med == null ? null : Math.round(med / MIN),
+    lostMin: Math.round(delays.reduce((a, b) => a + b, 0) / MIN),
+    hours, weekdays, topHour: argmax(hours), topWeekday: argmax(weekdays),
+    firstAt: sorted[0]?.hit_at ?? null,
+  };
+}

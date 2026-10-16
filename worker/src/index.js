@@ -1,5 +1,5 @@
 // ratelimit.world: Cloudflare Worker (API + ページ + 毎分の通知 Cron)
-import { computeStats, validTz, localTime, dayKey, delayOf, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
+import { profileStats, computeStats, validTz, localTime, dayKey, delayOf, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
 import { sendPush, b64u } from "./webpush.js";
 import { pickLang, tr, LANGS } from "./i18n.js";
 import { notice } from "./notice.js";
@@ -497,6 +497,18 @@ function lossSummary(ws, now = Date.now()) {
   };
 }
 
+// プロフィール: 全期間の記録から、自己ベストや習慣を数え直す
+async function profileData(env, u, now = Date.now()) {
+  const [{ results: ws }, weekly, { results: opened }, sessions] = await Promise.all([
+    env.DB.prepare("SELECT tool, hit_at, COALESCE(ended_at, reset_at) AS reset_at, resumed_at, ended_at, tokens FROM windows WHERE user_id = ? ORDER BY hit_at").bind(u.id).all(),
+    userWeekly(env, u.id, 3650),
+    env.DB.prepare("SELECT start_at FROM opened_windows WHERE user_id = ?").bind(u.id).all(),
+    userSessions(env, u.id),
+  ]);
+  const s = computeStats(ws, { tz: u.tz, goal: u.goal, now, weekly, sessions, seed: u.id });
+  return { s, p: profileStats(ws, opened, s, { tz: u.tz, now }), loss: lossSummary(ws, now) };
+}
+
 // オンボーディングで「連携できた！」の瞬間に見せる要約
 async function meSummary(env, user) {
   const { results: ws } = await env.DB.prepare("SELECT tool, hit_at, COALESCE(ended_at, reset_at) AS reset_at, resumed_at, tokens FROM windows WHERE user_id = ? AND hit_at > ?")
@@ -694,7 +706,8 @@ async function route(req, env) {
       user && user.id !== u.id ? env.DB.prepare("SELECT 1 AS y FROM follows WHERE follower_id = ? AND followee_id = ?").bind(user.id, u.id).first() : null,
     ]);
     const social = { followers: followers.n, following: !!following, flash: url.searchParams.get("friend") };
-    return html(pages.profile(ctx, u, await statsFor(env, u), origin, social));
+    const { s, p: ps, loss } = await profileData(env, u);
+    return html(pages.profile(ctx, u, s, origin, { ...social, ps, loss }));
   }
 
   // ここから先はログインが必要

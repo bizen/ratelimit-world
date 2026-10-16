@@ -573,7 +573,7 @@ ${friendsCard(ctx, s, friends, flash, origin, now)}
   <p class="muted small">${t("setup.note", last)}</p>
 </section>
 
-<section class="card">
+<section class="card" id="settings">
   <h2 class="h3">${t("settings.h")}</h2>
   <form class="settings" data-settings>
     <label>${t("settings.goal")} <select name="goal">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((g) => `<option ${g === s.goal ? "selected" : ""}>${g}</option>`).join("")}</select> ${t("settings.goal.unit")}</label>
@@ -672,6 +672,52 @@ export function welcome(ctx, { origin, vapidKey }) {
 }
 
 // ---------- profile / leaderboard ----------
+// プロフィールの記録カード。日付は "2026-10-05" のような日のキー
+const fmtDay = (lang, k, withYear = false) => new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", {
+  timeZone: "UTC", month: lang === "ja" ? "numeric" : "short", day: "numeric", ...(withYear ? { year: "numeric" } : {}),
+}).format(new Date(`${k}T00:00:00Z`));
+
+function hm(ctx, min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? ctx.t("p.hm", h, m) : ctx.t("p.m", m);
+}
+
+function profileRecords(ctx, s, ps, loss) {
+  const { t, lang } = ctx;
+  const tile = (value, label, sub = "", cls = "") => `<div class="ptile"><dd class="${cls}">${value}</dd><dt>${label}</dt>${sub ? `<small>${sub}</small>` : ""}</div>`;
+  const year = (k) => k.slice(0, 4) !== String(new Date().getUTCFullYear());
+  const bests = [
+    ps.bestDay && tile(t("windows", ps.bestDay.count), t("p.bestDay"), fmtDay(lang, ps.bestDay.day, year(ps.bestDay.day))),
+    ps.bestOpened && tile(t("windows", ps.bestOpened.count), t("p.bestOpened"), fmtDay(lang, ps.bestOpened.day, year(ps.bestOpened.day))),
+    ps.bestWeek && tile(`${ps.bestWeek.xp.toLocaleString()} XP`, t("p.bestWeek"), t("p.weekOf", fmtDay(lang, ps.bestWeek.week, year(ps.bestWeek.week)))),
+    tile(t("p.times", ps.bestQuickRun), t("p.bestQuickRun"), t("p.bestQuickRun.sub")),
+    s.trophies ? tile(t("p.times", s.trophies), t("stat.trophies"), t("stat.trophies.tip")) : "",
+  ].filter(Boolean).join("");
+  const life = [
+    tile(s.xp.toLocaleString(), t("p.totalXp")),
+    tile(String(s.total), t("p.total"), `Claude Code ${ps.byTool.claude} · Codex ${ps.byTool.codex}`),
+    tile(t("p.days", ps.activeDays), t("p.activeDays"), t("p.goalDays", ps.goalDays)),
+    loss.priced ? tile(`$${loss.valueUsd.toLocaleString()}`, t("p.value"), t("p.value.sub")) : "",
+    ps.firstAt ? tile(fmtDay(lang, new Date(ps.firstAt).toISOString().slice(0, 10), true), t("p.since"), "", "sm") : "",
+  ].filter(Boolean).join("");
+  const restarts = ps.restarts ? [
+    tile(`${ps.quickRate}%`, t("p.quickRate"), t("p.quickRate.sub", ps.quick, ps.restarts)),
+    tile(hm(ctx, ps.medianLateMin), t("p.medianLate"), t("p.medianLate.sub")),
+    tile(hm(ctx, ps.lostMin), t("p.lost"), t("p.lost.sub"), ps.lostMin >= 60 ? "sm" : ""),
+  ].join("") : "";
+  const max = Math.max(1, ...ps.hours);
+  const bars = ps.hours.map((n, h) => `<i style="--h:${(n / max) * 100}%" class="${h === ps.topHour ? "top" : ""}" title="${t("p.hourTip", h, n)}"></i>`).join("");
+  const wd = t("p.weekdays");
+  return `<section class="card pcard"><h2 class="h3">${t("p.bests")}</h2><dl class="ptiles">${bests}</dl></section>
+<section class="card pcard"><h2 class="h3">${t("p.life")}</h2><dl class="ptiles">${life}</dl></section>
+${restarts ? `<section class="card pcard"><h2 class="h3">${t("p.restarts")}</h2><dl class="ptiles">${restarts}</dl></section>` : ""}
+${ps.topHour != null ? `<section class="card pcard"><h2 class="h3">${t("p.when")}</h2>
+  <p class="muted">${t("p.whenTop", ps.topHour, wd[ps.topWeekday])}</p>
+  <div class="hours" role="img" aria-label="${esc(t("p.hoursAria"))}">${bars}</div>
+  <div class="hours-axis"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+</section>` : ""}`;
+}
+
 export function profile(ctx, u, s, origin, social = {}) {
   const { t, lang, user: viewer } = ctx;
   const self = viewer?.id === u.id;
@@ -701,18 +747,20 @@ ${social.flash === "added" ? `<p class="fr-flash" role="status">${t("fr.added", 
   <div class="stat"><b>${s.total}</b><span>${t("stat.total")}</span></div>
   ${s.trophies ? `<div class="stat trophy"><b>${s.trophies}</b><span>${t("stat.trophies")}</span></div>` : ""}
 </section>
+${self && !u.public ? `<p class="private-note" role="status">🔒 ${t("p.private")} <a href="/me#settings">${t("p.private.link")}</a></p>` : ""}
 <section class="card">
   <h2 class="h3">${t("prof.today", s.todayCount)}${tier ? ` <span class="tier">${esc(tier)}</span>` : ""}</h2>
   ${todayTrack(ctx, s, Date.now())}
   ${heatmap(ctx, s)}
 </section>
-<section class="card share-card">
+${social.ps ? profileRecords(ctx, s, social.ps, social.loss) : ""}
+${u.public ? `<section class="card share-card">
   <img src="/@${esc(u.login)}/card.svg?lang=${lang}" alt="${esc(t("prof.cardAlt", u.login))}" width="600" height="315">
   <div class="row">
     <a class="btn" target="_blank" rel="noopener" href="https://x.com/intent/post?text=${encodeURIComponent(t("prof.shareText", s.streak))}&url=${encodeURIComponent(url)}">${t("prof.shareX")}</a>
     <button class="btn ghost" data-copy-text="${esc(url)}">${t("prof.copyLink")}</button>
   </div>
-</section>`,
+</section>` : ""}`,
   });
 }
 

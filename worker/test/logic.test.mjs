@@ -242,3 +242,32 @@ test("daily quests: three per day, stable per user and day, with progress", asyn
   const s = computeStats(ws, { tz: TZ, goal: 2, now, seed: "s1" });
   assert.equal(s.todayQuestXp, s.todayQuests.filter((q) => q.done).length * QUEST_XP);
 });
+
+test("profileStats: bests, restarts and patterns", async () => {
+  const { profileStats, computeStats } = await import("../src/logic.js");
+  const H = 3600e3, M = 60e3;
+  const base = Date.UTC(2026, 9, 5, 0, 0); // 月曜 (UTC)
+  const ws = [
+    { tool: "claude", hit_at: base + 9 * H, reset_at: base + 14 * H, resumed_at: base + 14 * H + 2 * M },
+    { tool: "claude", hit_at: base + 15 * H, reset_at: base + 20 * H, resumed_at: base + 20 * H + 1 * M },
+    { tool: "codex", hit_at: base + 15 * H + 30 * M, reset_at: base + 20 * H + 30 * M, resumed_at: base + 20 * H + 50 * M },
+    { tool: "claude", hit_at: base + 24 * H + 15 * H, reset_at: base + 24 * H + 20 * H, resumed_at: null },
+  ];
+  const now = base + 3 * 24 * H;
+  const s = computeStats(ws, { tz: "UTC", goal: 2, now });
+  const opened = [{ start_at: base + 1 * H }, { start_at: base + 10 * H }, { start_at: base + 16 * H }, { start_at: base + 26 * H }];
+  const p = profileStats(ws, opened, s, { tz: "UTC", now });
+  assert.deepEqual(p.bestDay, { count: 3, day: "2026-10-05" });
+  assert.deepEqual(p.bestOpened, { count: 3, day: "2026-10-05" });
+  assert.equal(p.bestQuickRun, 2);
+  assert.equal(p.restarts, 3);
+  assert.equal(p.quickRate, 67);
+  assert.equal(p.medianLateMin, 2);
+  assert.equal(p.lostMin, 23);
+  assert.equal(p.topHour, 15);
+  assert.equal(p.topWeekday, 0);
+  assert.deepEqual(p.byTool, { claude: 3, codex: 1 });
+  assert.equal(p.activeDays, 2);
+  assert.equal(p.goalDays, 1);
+  assert.equal(p.bestWeek.week, "2026-10-05");
+});
