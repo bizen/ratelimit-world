@@ -203,26 +203,38 @@ function heatmap(ctx, s, days = 28) {
   return `<div class="heat" role="img" aria-label="${t("heat.aria", days)}">${cells}</div>`;
 }
 
-// 今の 5時間枠: 左に開始 (= 次のリセットの 5時間前)、右に次のリセット。
-// リミット中ならその正確な時刻、使用中なら PC から届いた予定 (Claude Code は推定)
-function windowRow(ctx, tool, s, now, limitedAt) {
-  const { t } = ctx;
-  const r = limitedAt ? { resetAt: limitedAt, exact: true } : s.nextReset?.[tool];
-  if (!(r?.resetAt > now)) {
-    return `<div><dt>${t("dial.nextReset")}</dt><dd><span class="none">${t("dial.noWindow")}</span></dd></div>`;
-  }
-  const est = r.exact ? "" : `<small>${t("dial.estimated")}</small>`;
-  return `<div class="pair">
-      <div><dt>${t("dial.started")}</dt><dd>${localTime(r.resetAt - WINDOW_MS, s.tz)}${est}</dd></div>
-      <div><dt>${t("dial.nextReset")}</dt><dd>${localTime(r.resetAt, s.tz)}${est}</dd></div>
-    </div>`;
-}
+// ダイヤルの下の欄。両方のダイヤルで同じマス目 (2列×3行) にして、高さをそろえる:
+//   枠の開始 | 次のリセット
+//   昨日     | 週間枠の使用率
+//   最後に使い切った (横いっぱい)
+// 値がないマスは「—」にして、マスの数は変えない
+const shortWhen = (lang, ms, tz) => new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", {
+  timeZone: tz, month: lang === "ja" ? "numeric" : "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+}).format(new Date(ms));
 
-// 週間枠の使用率 (Codex はログから、Claude Code はステータスラインの中継がオンのときだけ)
-function weekRow(ctx, tool, s, now) {
+const shortDay = (lang, ms, tz) => new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", { timeZone: tz, month: lang === "ja" ? "numeric" : "short", day: "numeric" }).format(new Date(ms));
+
+function dialFoot(ctx, tool, s, now, limitedAt) {
+  const { t, lang } = ctx;
+  const cell = (label, value, cls = "") => `<div class="${cls}"><dt>${label}</dt><dd>${value}</dd></div>`;
+  const dash = `<span class="none">—</span>`;
+  // 今の 5時間枠。リミット中ならその正確な時刻、使用中なら PC から届いた予定 (中継オフの Claude Code は推定)
+  const r = limitedAt ? { resetAt: limitedAt, exact: true } : s.nextReset?.[tool];
+  const active = r?.resetAt > now;
+  const est = active && !r.exact ? `<small>${t("dial.estimated")}</small>` : "";
   const w = s.nextReset?.[tool]?.week;
-  if (!w || !(w.resetAt > now)) return "";
-  return `<div><dt>${ctx.t("dial.week")}</dt><dd>${Math.round(w.pct)}%<small>${ctx.t("dial.weekReset", fmtWhen(ctx.lang, w.resetAt, s.tz))}</small></dd></div>`;
+  const week = w?.resetAt > now ? `${Math.round(w.pct)}%<small>${t("dial.weekReset", shortDay(lang, w.resetAt, s.tz))}</small>` : dash;
+  const last = s.lastHitByTool[tool];
+  const lastText = last
+    ? `${ago(ctx, now - last)}<small>${last < now - 20 * 3600 * 1000 ? shortWhen(lang, last, s.tz) : localTime(last, s.tz)}</small>`
+    : t("dial.never");
+  return `<dl class="dial-foot">
+    ${cell(t("dial.started"), active ? localTime(r.resetAt - WINDOW_MS, s.tz) + est : dash)}
+    ${cell(t("dial.nextReset"), active ? localTime(r.resetAt, s.tz) + est : dash)}
+    ${cell(t("dial.yesterday"), t("windows", s.yesterdayByTool[tool]))}
+    ${cell(t("dial.week"), week)}
+    ${cell(t("dial.lastHit"), lastText, "wide")}
+  </dl>`;
 }
 
 // ツールごとの「次のリセット」ダイヤル
@@ -240,6 +252,7 @@ function dial(ctx, tool, s, now) {
   } else if (x?.state === "limited") {
     state = "limited";
     resetAt = x.resetAt;
+    usedPct = 100;
     frac = Math.min(1, Math.max(0, (x.resetAt - now) / WINDOW_MS));
     sub = t("dial.sub.limited", localTime(x.resetAt, s.tz));
   } else if (s.nextReset?.[tool]?.resetAt > now) {
@@ -248,8 +261,9 @@ function dial(ctx, tool, s, now) {
     state = "using";
     resetAt = r.resetAt;
     // 使用率が分かれば (Codex) リングは使用率、分からなければ (Claude Code) 残り時間
+    // リングはリセットまでの残り時間、使用率は横の縦バーで別に見せる
     usedPct = r.pct ?? null;
-    frac = usedPct != null ? usedPct / 100 : Math.min(1, Math.max(0, (r.resetAt - now) / WINDOW_MS));
+    frac = Math.min(1, Math.max(0, (r.resetAt - now) / WINDOW_MS));
     sub = t(r.exact ? "dial.sub.using" : "dial.sub.usingEst", localTime(r.resetAt, s.tz));
   } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
     state = "ready";
@@ -262,22 +276,22 @@ function dial(ctx, tool, s, now) {
   return `
 <article class="dial tool-${tool} ${state}" data-tool="${tool}" ${resetAt ? `data-reset="${resetAt}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
   <h3>${TOOL_ICON[tool]}${TOOL_NAME[tool]}</h3>
-  <div class="ring">
-    <svg viewBox="0 0 120 120" aria-hidden="true">
-      <circle class="track" cx="60" cy="60" r="${R}"/>
-      <circle class="fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - frac)).toFixed(1)}" data-c="${C.toFixed(1)}"/>
-    </svg>
-    <div class="ring-text"><small data-ready-label="${t("dial.ready")}">${usedPct != null ? t("dial.usedPct", Math.round(usedPct)) : t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
+  <div class="ring-row">
+    <div class="ring">
+      <svg viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="track" cx="60" cy="60" r="${R}"/>
+        <circle class="fill" cx="60" cy="60" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - frac)).toFixed(1)}" data-c="${C.toFixed(1)}"/>
+      </svg>
+      <div class="ring-text"><small data-ready-label="${t("dial.ready")}">${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
+    </div>
+    <div class="usage ${usedPct == null ? "unknown" : ""}" role="img" aria-label="${usedPct == null ? t("dial.usageUnknown") : t("dial.usedPct", Math.round(usedPct))}">
+      <b>${usedPct == null ? "—" : `${Math.round(usedPct)}%`}</b>
+      <span class="bar"><i style="height:${usedPct ?? 0}%"></i></span>
+      <small>${t("dial.usage")}</small>
+    </div>
   </div>
   <p class="dial-sub">${esc(sub)}</p>
-  <dl class="dial-foot">
-    ${windowRow(ctx, tool, s, now, state === "limited" ? resetAt : null)}
-    ${weekRow(ctx, tool, s, now)}
-    <div><dt>${t("dial.yesterday")}</dt><dd>${t("windows", s.yesterdayByTool[tool])}</dd></div>
-    <div><dt>${t("dial.lastHit")}</dt><dd>${s.lastHitByTool[tool]
-      ? `${ago(ctx, now - s.lastHitByTool[tool])}<small>${s.lastHitByTool[tool] < now - 20 * 3600 * 1000 ? fmtWhen(lang, s.lastHitByTool[tool], s.tz) : localTime(s.lastHitByTool[tool], s.tz)}</small>`
-      : t("dial.never")}</dd></div>
-  </dl>
+  ${dialFoot(ctx, tool, s, now, state === "limited" ? resetAt : null)}
 </article>`;
 }
 
