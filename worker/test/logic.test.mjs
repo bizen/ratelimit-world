@@ -169,3 +169,10 @@ test("API value of a window and lost windows from a delay", async () => {
   assert.deepEqual(priceOf("codex", "gpt-6.1-sol").p, [2, 10, 0.1]);
   assert.equal(lostWindowsOf(30), 30 / 330);
 });
+
+test("yesterday's count and the last time a limit was hit", () => {
+  const ws = [...daysOf(1, "2026-10-15", 3), win("codex", "2026-10-16T09:30:00", "2026-10-16T12:00:00", null)];
+  const s = computeStats(ws, { tz: TZ, goal: 2, now: jst("2026-10-16T14:00:00") });
+  assert.equal(s.yesterdayCount, 3);
+  assert.deepEqual(s.lastHit, { at: jst("2026-10-16T09:30:00"), tool: "codex" });
+});

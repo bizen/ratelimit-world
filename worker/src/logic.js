@@ -181,6 +181,8 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
   return {
     today, goal, tz,
     todayCount,
+    yesterdayCount: days[addDays(today, -1)]?.count ?? 0,
+    lastHit: ws.length ? { at: ws[ws.length - 1].hit_at, tool: ws[ws.length - 1].tool } : null,
     todayWindows,
     todayXp: days[today]?.xp ?? 0,
     tier: tierOf(todayCount, goal),

@@ -12,6 +12,13 @@ export const planName = (ctx, tool, plan) =>
   PLAN_NAMES[tool][plan || "unknown"] ?? (plan && plan !== "unknown" ? `${tool === "claude" ? "Claude" : "ChatGPT"} ${plan}` : ctx.t(`plan.unknown.${tool}`));
 const planBadges = (ctx, u) => [["claude", u.claude_plan], ["codex", u.codex_plan]].filter(([, p]) => p).map(([tool, p]) => `<span class="plan">${esc(planName(ctx, tool, p))}</span>`).join("");
 
+// ツールのアイコン。Claude Code は起動画面の Clawd をドット絵にしたもの、Codex は ChatGPT のロゴを近似したもの。
+// どちらも各社の商標なので、正式に使うなら公式素材に差し替える
+const TOOL_ICON = {
+  claude: `<span class="tool-icon"><svg viewBox="0 0 16 10" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true"><rect x="2" y="0" width="1.02" height="2.04"/><rect x="2" y="2" width="1.02" height="2.04"/><rect x="3" y="0" width="1.02" height="2.04"/><rect x="4" y="0" width="1.02" height="2.04"/><rect x="3" y="2" width="1.02" height="2.04"/><rect x="5" y="0" width="1.02" height="2.04"/><rect x="6" y="0" width="1.02" height="2.04"/><rect x="6" y="2" width="1.02" height="2.04"/><rect x="5" y="2" width="1.02" height="2.04"/><rect x="7" y="0" width="1.02" height="2.04"/><rect x="8" y="0" width="1.02" height="2.04"/><rect x="8" y="2" width="1.02" height="2.04"/><rect x="7" y="2" width="1.02" height="2.04"/><rect x="9" y="0" width="1.02" height="2.04"/><rect x="10" y="0" width="1.02" height="2.04"/><rect x="10" y="2" width="1.02" height="2.04"/><rect x="9" y="2" width="1.02" height="2.04"/><rect x="11" y="0" width="1.02" height="2.04"/><rect x="12" y="0" width="1.02" height="2.04"/><rect x="12" y="2" width="1.02" height="2.04"/><rect x="13" y="0" width="1.02" height="2.04"/><rect x="13" y="2" width="1.02" height="2.04"/><rect x="0" y="4" width="1.02" height="2.04"/><rect x="1" y="4" width="1.02" height="2.04"/><rect x="2" y="4" width="1.02" height="2.04"/><rect x="2" y="6" width="1.02" height="2.04"/><rect x="3" y="4" width="1.02" height="2.04"/><rect x="4" y="4" width="1.02" height="2.04"/><rect x="4" y="6" width="1.02" height="2.04"/><rect x="3" y="6" width="1.02" height="2.04"/><rect x="5" y="4" width="1.02" height="2.04"/><rect x="6" y="4" width="1.02" height="2.04"/><rect x="6" y="6" width="1.02" height="2.04"/><rect x="5" y="6" width="1.02" height="2.04"/><rect x="7" y="4" width="1.02" height="2.04"/><rect x="8" y="4" width="1.02" height="2.04"/><rect x="8" y="6" width="1.02" height="2.04"/><rect x="7" y="6" width="1.02" height="2.04"/><rect x="9" y="4" width="1.02" height="2.04"/><rect x="10" y="4" width="1.02" height="2.04"/><rect x="10" y="6" width="1.02" height="2.04"/><rect x="9" y="6" width="1.02" height="2.04"/><rect x="11" y="4" width="1.02" height="2.04"/><rect x="12" y="4" width="1.02" height="2.04"/><rect x="12" y="6" width="1.02" height="2.04"/><rect x="11" y="6" width="1.02" height="2.04"/><rect x="13" y="4" width="1.02" height="2.04"/><rect x="14" y="4" width="1.02" height="2.04"/><rect x="13" y="6" width="1.02" height="2.04"/><rect x="15" y="4" width="1.02" height="2.04"/><rect x="3" y="8" width="1.02" height="2.04"/><rect x="5" y="8" width="1.02" height="2.04"/><rect x="10" y="8" width="1.02" height="2.04"/><rect x="12" y="8" width="1.02" height="2.04"/></svg></span>`,
+  codex: `<span class="tool-icon"><svg viewBox="-12 -12 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(0) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(60) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(120) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(180) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(240) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(300) translate(3.2 0)"/></svg></span>`,
+};
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 function layout(ctx, { title, body, head = "", bodyClass = "" }) {
@@ -140,6 +147,14 @@ export function landing(ctx, origin) {
 }
 
 // ---------- dashboard ----------
+// 「2時間前」「3日前」のような経過時間
+function ago(ctx, ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m < 60) return ctx.t("ago.min", m);
+  const h = Math.round(m / 60);
+  return h < 48 ? ctx.t("ago.hour", h) : ctx.t("ago.day", Math.round(h / 24));
+}
+
 const nextLimited = (s) => Object.values(s.tools).map((x) => x.resetAt).sort((a, b) => a - b)[0];
 
 function nextWindowText(ctx, s, now) {
@@ -214,8 +229,8 @@ function dial(ctx, tool, s, now) {
   }
   const R = 52, C = 2 * Math.PI * R;
   return `
-<article class="dial ${state}" data-tool="${tool}" ${resetAt ? `data-reset="${resetAt}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
-  <h3>${TOOL_NAME[tool]}</h3>
+<article class="dial tool-${tool} ${state}" data-tool="${tool}" ${resetAt ? `data-reset="${resetAt}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
+  <h3>${TOOL_ICON[tool]}${TOOL_NAME[tool]}</h3>
   <div class="ring">
     <svg viewBox="0 0 120 120" aria-hidden="true">
       <circle class="track" cx="60" cy="60" r="${R}"/>
@@ -258,6 +273,7 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
     ? t("today.done", s.goal, s.todayCount + 1, esc(tierName(lang, s.nextTier)), s.nextXp)
     : t("today.left", left) + nextWindowText(ctx, s, now)}${record ? ` · <span class="record">${t("today.record")}</span>` : s.bestDay > 0 ? ` · ${t("today.best", s.bestDay)}` : ""}</p>
   <p class="late">${t("today.late", s.todayLateMin)}${s.quickRun > 0 ? ` · ${t("today.quick", s.quickRun)}` : ""}</p>
+  <p class="recent">${t("today.yesterday", s.yesterdayCount)}${s.lastHit ? ` · ${t("today.lastHit", ago(ctx, now - s.lastHit.at), TOOL_NAME[s.lastHit.tool], localTime(s.lastHit.at, s.tz))}` : ""}</p>
 </section>
 <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
 

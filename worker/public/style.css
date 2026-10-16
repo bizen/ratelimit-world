@@ -385,3 +385,28 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .steps li.back:hover { text-decoration: underline; }
 .goal-card.selected { border-color: var(--violet); background: var(--violet-soft); box-shadow: 0 4px 0 var(--violet); }
 .goal-card.selected .goal-name::after { content: " ✓"; color: var(--violet); }
+
+/* ツールごとのダイヤル: Claude Code はオレンジ、Codex は白 (どちらのテーマでも同じ色) */
+.dial h3 { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.tool-icon { display: inline-grid; place-items: center; flex: none; }
+.tool-icon svg { display: block; }
+.dial.tool-claude { background: #D97757; border-color: #C25F3E; color: #fff; box-shadow: 0 2px 0 #B3562F; }
+.dial.tool-claude .tool-icon { width: 30px; height: 30px; border-radius: 50%; background: #FBF0E8; color: #D97757; }
+.dial.tool-claude .tool-icon svg { width: 19px; }
+.dial.tool-claude .track { stroke: rgb(255 255 255 / .28); }
+.dial.tool-claude .fill { stroke: #fff; }
+.dial.tool-claude .ring-text small, .dial.tool-claude .dial-sub { color: rgb(255 255 255 / .86); }
+.dial.tool-claude.ready .clock { color: #fff; }
+.dial.tool-claude.ready { border-color: #fff; }
+.dial.tool-codex { background: #fff; border-color: #E3E3E3; color: #0D0D0D; box-shadow: 0 2px 0 #E3E3E3; }
+.dial.tool-codex .tool-icon { width: 22px; height: 22px; color: #0D0D0D; }
+.dial.tool-codex .tool-icon svg { width: 22px; height: 22px; }
+.dial.tool-codex .track { stroke: #EDEDED; }
+.dial.tool-codex .fill { stroke: #0D0D0D; }
+.dial.tool-codex .ring-text small, .dial.tool-codex .dial-sub { color: #6B6B6B; }
+.dial.weekly .fill { stroke: #E8B931; }
+.dial.ready.tool-codex .fill { stroke: var(--go); }
+
+/* 昨日の枠数と、最後に使い切った時刻 */
+.recent { margin: 4px 0 0; font-size: 14px; color: var(--muted); }
+.recent b { color: var(--ink); font-family: var(--mono); }
