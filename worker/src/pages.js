@@ -152,7 +152,7 @@ function ago(ctx, ms) {
   const m = Math.max(0, Math.round(ms / 60000));
   if (m < 60) return ctx.t("ago.min", m);
   const h = Math.round(m / 60);
-  return h < 48 ? ctx.t("ago.hour", h) : ctx.t("ago.day", Math.round(h / 24));
+  return h < 24 ? ctx.t("ago.hour", h) : ctx.t("ago.day", Math.floor(h / 24));
 }
 
 const nextLimited = (s) => Object.values(s.tools).map((x) => x.resetAt).sort((a, b) => a - b)[0];
@@ -239,6 +239,12 @@ function dial(ctx, tool, s, now) {
     <div class="ring-text"><small data-ready-label="${t("dial.ready")}">${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b></div>
   </div>
   <p class="dial-sub">${esc(sub)}</p>
+  <dl class="dial-foot">
+    <div><dt>${t("dial.yesterday")}</dt><dd>${t("windows", s.yesterdayByTool[tool])}</dd></div>
+    <div><dt>${t("dial.lastHit")}</dt><dd>${s.lastHitByTool[tool]
+      ? `${ago(ctx, now - s.lastHitByTool[tool])}<small>${s.lastHitByTool[tool] < now - 20 * 3600 * 1000 ? fmtWhen(lang, s.lastHitByTool[tool], s.tz) : localTime(s.lastHitByTool[tool], s.tz)}</small>`
+      : t("dial.never")}</dd></div>
+  </dl>
 </article>`;
 }
 
@@ -273,7 +279,6 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
     ? t("today.done", s.goal, s.todayCount + 1, esc(tierName(lang, s.nextTier)), s.nextXp)
     : t("today.left", left) + nextWindowText(ctx, s, now)}${record ? ` · <span class="record">${t("today.record")}</span>` : s.bestDay > 0 ? ` · ${t("today.best", s.bestDay)}` : ""}</p>
   <p class="late">${t("today.late", s.todayLateMin)}${s.quickRun > 0 ? ` · ${t("today.quick", s.quickRun)}` : ""}</p>
-  <p class="recent">${t("today.yesterday", s.yesterdayCount)}${s.lastHit ? ` · ${t("today.lastHit", ago(ctx, now - s.lastHit.at), TOOL_NAME[s.lastHit.tool], localTime(s.lastHit.at, s.tz))}` : ""}</p>
 </section>
 <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
 

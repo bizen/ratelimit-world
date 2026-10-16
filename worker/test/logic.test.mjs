@@ -174,5 +174,7 @@ test("yesterday's count and the last time a limit was hit", () => {
   const ws = [...daysOf(1, "2026-10-15", 3), win("codex", "2026-10-16T09:30:00", "2026-10-16T12:00:00", null)];
   const s = computeStats(ws, { tz: TZ, goal: 2, now: jst("2026-10-16T14:00:00") });
   assert.equal(s.yesterdayCount, 3);
-  assert.deepEqual(s.lastHit, { at: jst("2026-10-16T09:30:00"), tool: "codex" });
+  assert.deepEqual(s.yesterdayByTool, { claude: 2, codex: 1 });
+  assert.equal(s.lastHitByTool.codex, jst("2026-10-16T09:30:00"));
+  assert.equal(s.lastHitByTool.claude, jst("2026-10-15T12:00:00"));
 });
