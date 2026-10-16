@@ -83,3 +83,26 @@ test("tool state, today's late minutes and quick-start run", () => {
   const s2 = computeStats(ws.slice(0, 2), { tz: TZ, goal: 2, now });
   assert.equal(s2.quickRun, 2);
 });
+
+test("combo XP grows with each window in the same day", async () => {
+  const { msg } = await import("../src/logic.js");
+  const now = jst("2026-10-16T22:00:00");
+  const ws = [
+    win("claude", "2026-10-16T02:00:00", "2026-10-16T05:00:00", "2026-10-16T05:01:00"),  // 100 + 50 (即スタート)
+    win("claude", "2026-10-16T08:00:00", "2026-10-16T10:00:00", null),                    // 120
+    win("codex", "2026-10-16T12:00:00", "2026-10-16T15:00:00", null),                     // 150
+    win("codex", "2026-10-15T12:00:00", "2026-10-15T15:00:00", null),                     // 前日: 100
+  ];
+  const s = computeStats(ws, { tz: TZ, goal: 2, now });
+  assert.deepEqual(s.todayWindows.map((w) => w.xp), [150, 120, 150]);
+  assert.equal(s.todayXp, 420);
+  assert.equal(s.tier, "ハットトリック");
+  assert.equal(s.nextXp, 200);
+  assert.equal(s.bestDay, 1);
+  assert.equal(s.todayIsRecord, true);
+  const m = msg.hit("codex", s, ws[2]);
+  assert.match(m.title, /3枠目「ハットトリック」 \+150 XP/);
+  assert.match(m.body, /自己ベスト更新/);
+  const goal = msg.hit("claude", computeStats(ws.slice(0, 2), { tz: TZ, goal: 2, now }), ws[1]);
+  assert.match(goal.body, /目標達成/);
+});

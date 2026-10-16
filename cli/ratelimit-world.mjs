@@ -352,7 +352,7 @@ async function setup(server) {
   console.log(`🔥 ratelimit.world のセットアップ (${cfg.server})\n`);
   const start = await api({ server: cfg.server }, "POST", "/api/cli/start", { platform: process.platform });
   console.log(`ブラウザでログインして、このコードを確認してください: ${start.userCode}\n  ${start.verifyUrl}\n`);
-  openBrowser(start.verifyUrl);
+  if (!process.env.RATELIMIT_WORLD_NO_BROWSER) openBrowser(start.verifyUrl);
   const deadline = Date.now() + 10 * 60 * 1000;
   let token = null;
   while (Date.now() < deadline) {
@@ -381,8 +381,30 @@ async function setup(server) {
   saveConfig(cfg);
 
   console.log("\n過去 60 日分のログを送ります…");
-  await sync({ full: true });
-  console.log(`\nあとは普段どおり使うだけです。スマホで ${cfg.server}/me を開いて通知を ON にしてください。`);
+  await sync({ full: true, quiet: true });
+  printHistory(collect(60).windows);
+  console.log(`\n🎉 準備完了！ ブラウザに戻って、通知を ON にしてください。あとは普段どおり使うだけです。`);
+}
+
+// setup の最後に、これまでの記録をひと目で見せる
+function printHistory(windows) {
+  const c = process.stdout.isTTY ? (code, s) => `\x1b[${code}m${s}\x1b[0m` : (_, s) => s;
+  const byTool = (t) => windows.filter((w) => w.tool === t).length;
+  const delays = windows.filter((w) => w.resumedAt).map((w) => w.resumedAt - w.resetAt).filter((d) => d >= 0 && d <= 3 * HOUR);
+  const lost = Math.round(delays.reduce((a, b) => a + b, 0) / 60000);
+  console.log(`\n${c("1", "これまでの記録 (過去60日)")}`);
+  console.log(`  使い切った枠   ${c("1;35", windows.length)}  (Claude Code ${byTool("claude")} / Codex ${byTool("codex")})`);
+  if (delays.length) {
+    console.log(`  平均の出遅れ   ${c("1;33", Math.round(lost / delays.length) + " 分")}  → 合計 ${Math.floor(lost / 60)}時間${lost % 60}分 を取りこぼしていました`);
+  }
+  // 直近14日を 1日1文字で: 0枠 · / 1枠 ▂ / 2枠 ▅ / 3枠以上 █
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(Date.now() - i * DAY).toDateString();
+    const n = windows.filter((w) => new Date(w.hitAt).toDateString() === d).length;
+    days.push(n === 0 ? c("2", "·") : c("35", n === 1 ? "▂" : n === 2 ? "▅" : "█"));
+  }
+  console.log(`  直近14日       ${days.join(" ")}`);
 }
 
 function uninstall() {

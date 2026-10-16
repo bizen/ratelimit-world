@@ -1,5 +1,5 @@
 // サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js
-import { TOOL_NAME, addDays, localTime, WINDOW_MS } from "./logic.js";
+import { TOOL_NAME, addDays, localTime, comboXp, tierOf, WINDOW_MS } from "./logic.js";
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -34,9 +34,10 @@ ${head}
 </html>`;
 }
 
-export function message(title, text, href, label) {
+export function message(title, text, href, label, user = null) {
   return layout({
     title: `${title} · ratelimit.world`,
+    user,
     body: `<section class="card narrow center"><h1 class="h2">${esc(title)}</h1><p>${esc(text)}</p>${href ? `<p><a class="btn" href="${esc(href)}">${esc(label)}</a></p>` : ""}</section>`,
   });
 }
@@ -114,12 +115,27 @@ export function landing(user, origin) {
 }
 
 // ---------- dashboard ----------
-function pips(count, goal, max = 5) {
-  const n = Math.max(goal, Math.min(max, count), 1);
+// 今日のトラック: 枠を 1つずつ積んでいく。先のマスにも XP を見せて、次を取りたくさせる
+function todayTrack(s, now) {
+  const n = s.todayCount;
+  const slots = Math.min(10, Math.max(5, s.goal, n + 1));
+  const limited = Object.values(s.tools).map((t) => t.resetAt).sort((a, b) => a - b)[0];
+  const ready = Object.entries(s.lastReset).some(([, w]) => w.resumed_at == null && now - w.reset_at < 3 * 3600 * 1000);
+  const nextLabel = ready ? "今すぐ" : limited ? `${localTime(limited, s.tz)}〜` : "いつでも";
   let out = "";
-  for (let i = 0; i < n; i++) out += `<i class="pip ${i < count ? "on" : ""} ${i >= goal ? "extra" : ""}"></i>`;
-  if (count > max) out += `<b class="pip-more">+${count - max}</b>`;
-  return out;
+  for (let i = 1; i <= slots; i++) {
+    const w = s.todayWindows[i - 1];
+    const goalMark = i === s.goal ? ` goal` : "";
+    if (w) {
+      out += `<li class="slot done${goalMark}" style="--i:${i}" data-n="${i}">
+        <b>${i}</b><span class="tool">${w.tool === "claude" ? "Claude" : "Codex"}</span><span class="xp">+${w.xp}</span></li>`;
+    } else if (i === n + 1) {
+      out += `<li class="slot next${goalMark}" style="--i:${i}"><b>${i}</b><span class="tool">${nextLabel}</span><span class="xp">+${comboXp(i)}</span></li>`;
+    } else {
+      out += `<li class="slot${goalMark}" style="--i:${i}"><b>${i}</b><span class="xp">+${comboXp(i)}</span></li>`;
+    }
+  }
+  return `<ol class="track" aria-label="今日の枠">${out}</ol>`;
 }
 
 function heatmap(s, days = 28) {
@@ -192,14 +208,18 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
   <div class="stat xp"><b>${s.weekXp.toLocaleString()}</b><span>今週の XP</span></div>
 </section>
 
-<section class="card today">
+<section class="card today" data-celebrate data-day="${s.today}" data-count="${s.todayCount}" data-tier="${esc(s.tier ?? "")}" data-last-xp="${s.todayWindows.at(-1)?.xp ?? 0}" data-record="${s.todayIsRecord && s.todayCount > 1 ? 1 : ""}" data-goal-hit="${s.todayCount === s.goal ? 1 : ""}">
   <div class="today-head">
-    <h1 class="h2">今日 <span class="num">${s.todayCount}</span><span class="of">/ ${s.goal}</span></h1>
-    <p class="muted">${s.todayDone ? "目標達成！記録を伸ばそう" : `あと ${left} 回 · 今から始めれば最大 ${s.possibleToday} 回`}</p>
+    <h1 class="h2">今日 <span class="num">${s.todayCount}</span><span class="unit">枠</span>${s.tier ? `<span class="tier">${esc(s.tier)}</span>` : ""}</h1>
+    <p class="today-xp"><b>+${s.todayXp}</b> XP</p>
   </div>
-  <div class="pips">${pips(s.todayCount, s.goal)}</div>
+  ${todayTrack(s, now)}
+  <p class="today-note">${s.todayDone
+    ? `目標の ${s.goal} 枠を達成。${s.todayCount + 1}枠目「${esc(s.nextTier)}」は <b>+${s.nextXp} XP</b>`
+    : `目標まであと <b>${left}</b> 枠 · 今から始めれば最大 ${s.possibleToday} 枠`}${s.todayIsRecord && s.todayCount > 1 ? ` · <span class="record">1日の自己ベスト更新中</span>` : s.bestDay > 0 ? ` · 自己ベスト ${s.bestDay} 枠` : ""}</p>
   <p class="late">今日の出遅れ <b>${s.todayLateMin}</b> 分${s.quickRun > 0 ? ` · 即スタート <b>${s.quickRun}</b> 連続` : ""}</p>
 </section>
+<div class="toast" data-toast role="status" aria-live="polite" hidden></div>
 
 <section class="dials">
   ${dial("claude", s, now)}
@@ -236,6 +256,7 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
     <label>ピンチ通知の時刻 <input type="time" name="remindAt" value="${esc(user.remind_at)}"></label>
     <label>タイムゾーン <input name="tz" value="${esc(user.tz)}" list="tzs"><datalist id="tzs" data-tz-list></datalist></label>
     <fieldset><legend>通知</legend>
+      ${chk("hit", "枠を使い切ったとき（n枠目・+XP）")}
       ${chk("reset", "リセットした瞬間")}
       ${chk("late", "リセットから10分たっても再開していないとき")}
       ${chk("pinch", "ピンチ（指定時刻に目標未達）")}
@@ -249,6 +270,69 @@ export function dashboard(user, s, { origin, vapidKey, hasCli, notify }) {
 <section class="row share">
   <a class="btn ghost" href="/@${esc(user.login)}">公開プロフィール</a>
   <form method="post" action="/logout"><button class="btn ghost">ログアウト</button></form>
+</section>`,
+  });
+}
+
+// ---------- onboarding ----------
+const GOALS = [
+  [1, "ゆるく", "まずは毎日1枠"],
+  [2, "毎日コツコツ", "おすすめ。朝と夜で2枠"],
+  [3, "ガチ", "ハットトリックを毎日"],
+  [4, "フルスロットル", "起きている間ずっと回す"],
+];
+
+export function welcome(user, { origin, vapidKey }) {
+  const cmd = `curl -fsSL ${origin}/install.sh | sh`;
+  return layout({
+    title: "ようこそ · ratelimit.world",
+    user,
+    head: `<meta name="rw-vapid" content="${esc(vapidKey)}">`,
+    bodyClass: "welcome-page",
+    body: `
+<section class="welcome" data-welcome data-goal="${user.goal}">
+  <ol class="steps" aria-label="セットアップの進み具合"><li class="on">目標</li><li>PC を連携</li><li>通知</li></ol>
+
+  <div class="step" data-step="1">
+    <p class="eyebrow">ようこそ、@${esc(user.login)}</p>
+    <h1 class="h1">1日に何枠、使い切る？</h1>
+    <p class="muted">目標の枠数を使い切った日が続くと、🔥ストリークが伸びます。あとから変えられます。</p>
+    <div class="goals">
+      ${GOALS.map(([g, name, desc]) => `<button class="goal-card ${g === 2 ? "rec" : ""}" data-goal-pick="${g}">
+        <span class="goal-n">${g}<small>枠</small></span><span class="goal-name">${name}</span><span class="goal-desc">${desc}</span>
+        <span class="goal-xp">1日 +${[100, 220, 370, 570][g - 1]} XP〜</span></button>`).join("")}
+    </div>
+  </div>
+
+  <div class="step" data-step="2" hidden>
+    <h1 class="h1">PC を連携しよう</h1>
+    <p>Claude Code や Codex を使っている PC のターミナルに貼りつけて、実行してください。ブラウザが開いたら「連携する」を押すだけです。</p>
+    <pre class="cmd"><code>${esc(cmd)}</code><button class="copy" data-copy aria-label="コマンドをコピー">コピー</button></pre>
+    <p class="waiting" data-link-wait><i class="dot"></i>PC からの連絡を待っています…</p>
+    <div class="reveal" data-link-done hidden>
+      <p class="reveal-title">✅ 連携できた！</p>
+      <div class="reveal-stats">
+        <div><b data-h="total">0</b><span>過去60日で使い切った枠</span></div>
+        <div><b data-h="avgLateMin">—</b><span>リセットからの平均の出遅れ（分）</span></div>
+        <div><b data-h="bestDay">0</b><span>1日の最多枠</span></div>
+      </div>
+      <p class="reveal-msg" data-h="message"></p>
+      <button class="btn big" data-next>通知を設定する</button>
+    </div>
+    <p class="skip"><button class="link" data-next>あとで連携する</button></p>
+  </div>
+
+  <div class="step" data-step="3" hidden>
+    <h1 class="h1">リセットの瞬間に、スマホを鳴らす</h1>
+    <p>このサービスの本体です。リセットした瞬間、枠を使い切った瞬間、出遅れているときに知らせます。</p>
+    <p class="muted" data-push-hint>iPhone の場合は、Safari の共有ボタンから「ホーム画面に追加」をして、追加したアイコンから開いてください。</p>
+    <div class="row">
+      <button class="btn big" data-push-enable>この端末で通知を受け取る</button>
+      <button class="btn ghost" data-push-test hidden>テスト通知を送る</button>
+    </div>
+    <p class="status" data-push-status role="status"></p>
+    <p><button class="btn ghost" data-finish>はじめる</button> <button class="link" data-finish>通知はあとで</button></p>
+  </div>
 </section>`,
   });
 }
@@ -273,8 +357,8 @@ export function profile(viewer, u, s, origin) {
   <div class="stat"><b>${s.total}</b><span>使い切った枠</span></div>
 </section>
 <section class="card">
-  <h2 class="h3">今日 ${s.todayCount} / ${s.goal}</h2>
-  <div class="pips">${pips(s.todayCount, s.goal)}</div>
+  <h2 class="h3">今日 ${s.todayCount} 枠${s.tier ? ` <span class="tier">${esc(s.tier)}</span>` : ""}</h2>
+  ${todayTrack(s, Date.now())}
   ${heatmap(s)}
 </section>
 <section class="card share-card">

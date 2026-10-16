@@ -126,3 +126,123 @@
     });
   }
 })();
+
+// ---------- お祝い演出と、オンボーディング ----------
+(() => {
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  };
+
+  // 紙吹雪 (動きを減らす設定のときは出さない)
+  function burst(x = innerWidth / 2, y = innerHeight / 3, n = 36) {
+    if (calm) return;
+    const colors = ["#5B4BFF", "#FF7A1A", "#36B9E8", "#16B364", "#FFC53D"];
+    for (let i = 0; i < n; i++) {
+      const p = document.createElement("i");
+      p.className = "confetti";
+      const a = Math.random() * Math.PI * 2, v = 120 + Math.random() * 220;
+      p.style.cssText = `left:${x}px;top:${y}px;background:${colors[i % colors.length]};--dx:${Math.cos(a) * v}px;--dy:${Math.sin(a) * v - 160}px;--r:${Math.random() * 720 - 360}deg`;
+      document.body.appendChild(p);
+      setTimeout(() => p.remove(), 1300);
+    }
+  }
+
+  function toast(html, ms = 3600) {
+    const t = $("[data-toast]") || Object.assign(document.body.appendChild(document.createElement("div")), { className: "toast" });
+    t.innerHTML = html;
+    t.hidden = false;
+    t.classList.remove("show");
+    void t.offsetWidth;
+    t.classList.add("show");
+    clearTimeout(t._h);
+    t._h = setTimeout(() => { t.classList.remove("show"); t.hidden = true; }, ms);
+  }
+
+  // ダッシュボード: 前に見たときより枠が増えていたら、増えた分を順にポップさせて祝う
+  const today = $("[data-celebrate]");
+  if (today) {
+    const { day, count, tier, lastXp, record, goalHit } = today.dataset;
+    const seen = store.get("rw:seen");
+    const n = +count;
+    if (seen && seen.day === day && n > seen.count) {
+      const fresh = $$(".slot.done", today).filter((el) => +el.dataset.n > seen.count);
+      fresh.forEach((el, i) => { el.classList.add("pop"); el.style.animationDelay = `${i * 180}ms`; });
+      setTimeout(() => {
+        const r = $(".slot.done.pop:last-of-type", today)?.getBoundingClientRect() ?? today.getBoundingClientRect();
+        burst(r.left + r.width / 2, r.top + r.height / 2, goalHit || record ? 60 : 30);
+        toast(`<b>${n}枠目「${tier}」</b> +${lastXp} XP${goalHit ? "<br>🔥 今日の目標達成！" : ""}${record ? "<br>1日の自己ベスト更新！" : ""}`);
+      }, fresh.length * 180 + 250);
+    }
+    store.set("rw:seen", { day, count: n });
+  }
+
+  // ---------- /welcome ----------
+  const root = $("[data-welcome]");
+  if (!root) return;
+  let step = 1;
+  const show = (k) => {
+    step = k;
+    for (const el of $$(".step", root)) el.hidden = +el.dataset.step !== k;
+    $$(".steps li", root).forEach((li, i) => li.classList.toggle("on", i < k));
+    $(`.step[data-step="${k}"] h1`, root)?.focus?.();
+    if (k === 2) poll();
+  };
+  const post = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+
+  // 1) 目標を選ぶ (ブラウザのタイムゾーンもここで保存する)
+  for (const b of $$("[data-goal-pick]", root)) {
+    b.addEventListener("click", async () => {
+      b.classList.add("picked");
+      await post("/api/settings", { goal: +b.dataset.goalPick, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      setTimeout(() => show(2), calm ? 0 : 260);
+    });
+  }
+
+  // 2) PC の連携を待つ。届いたら過去の記録を見せる
+  let polling = false;
+  async function poll() {
+    if (polling) return;
+    polling = true;
+    while (step === 2) {
+      const me = await fetch("/api/me").then((r) => r.json()).catch(() => null);
+      if (me?.linked && me.lastSyncAt) { reveal(me.history); break; }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    polling = false;
+  }
+  function countUp(el, to) {
+    if (to == null) { el.textContent = "—"; return; }
+    if (calm) { el.textContent = to; return; }
+    const t0 = performance.now(), dur = 900;
+    const f = (t) => { const k = Math.min(1, (t - t0) / dur); el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(f); };
+    requestAnimationFrame(f);
+  }
+  function reveal(h) {
+    $("[data-link-wait]", root).hidden = true;
+    $(".skip", root).hidden = true;
+    $("[data-link-done]", root).hidden = false;
+    countUp($('[data-h="total"]', root), h.total);
+    countUp($('[data-h="avgLateMin"]', root), h.avgLateMin);
+    countUp($('[data-h="bestDay"]', root), h.bestDay);
+    const lost = h.lostMin >= 60 ? `${Math.floor(h.lostMin / 60)}時間${h.lostMin % 60}分` : `${h.lostMin}分`;
+    $('[data-h="message"]', root).textContent = h.total === 0
+      ? "まだ記録はありません。最初の1枠を使い切ったら、ここから🔥が始まります。"
+      : h.avgLateMin
+        ? `リセットに気づかず、合計 ${lost} を取りこぼしていました。これをゼロにしよう。`
+        : "すでにいいペース。ここから毎日積み上げよう。";
+    const r = $(".reveal-title", root).getBoundingClientRect();
+    burst(r.left + r.width / 2, r.top + r.height / 2, 50);
+  }
+
+  for (const b of $$("[data-next]", root)) b.addEventListener("click", () => show(3));
+  for (const b of $$("[data-finish]", root)) {
+    b.addEventListener("click", async () => {
+      await post("/api/onboarded");
+      location.href = "/me";
+    });
+  }
+})();

@@ -1,5 +1,5 @@
 // ratelimit.world: Cloudflare Worker (API + ページ + 毎分の通知 Cron)
-import { computeStats, msg, validTz, localTime, dayKey, weekKey, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
+import { computeStats, msg, validTz, localTime, dayKey, delayOf, MIN, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
 import { sendPush, b64u } from "./webpush.js";
 import * as pages from "./pages.js";
 
@@ -33,7 +33,8 @@ function sameOrigin(req) {
   return !o || o === new URL(req.url).origin;
 }
 
-const parseNotify = (u) => { try { return { reset: true, late: true, pinch: true, goal: true, ...JSON.parse(u.notify) }; } catch { return { reset: true, late: true, pinch: true, goal: true }; } };
+const NOTIFY_DEFAULTS = { hit: true, reset: true, late: true, pinch: true, goal: true };
+const parseNotify = (u) => { try { return { ...NOTIFY_DEFAULTS, ...JSON.parse(u.notify) }; } catch { return { ...NOTIFY_DEFAULTS }; } };
 
 // ---------- auth ----------
 async function currentUser(req, env) {
@@ -169,6 +170,7 @@ async function handleSync(req, env) {
 
   const existing = await userWindows(env, user.id, 70);
   const stmts = [];
+  const added = [];
   for (const w of incoming) {
     // Codex のリセット時刻は数秒ぶれることがあるので、15分以内なら同じ枠とみなす
     const same = existing.find((e) => e.tool === w.tool && Math.abs(e.reset_at - w.resetAt) < 15 * MIN);
@@ -183,7 +185,9 @@ async function handleSync(req, env) {
     } else {
       stmts.push(env.DB.prepare("INSERT OR IGNORE INTO windows (user_id, tool, reset_at, hit_at, resumed_at) VALUES (?, ?, ?, ?, ?)")
         .bind(user.id, w.tool, w.resetAt, w.hitAt, w.resumedAt ?? null));
-      existing.push({ tool: w.tool, reset_at: w.resetAt, hit_at: w.hitAt, resumed_at: w.resumedAt ?? null });
+      const row = { tool: w.tool, reset_at: w.resetAt, hit_at: w.hitAt, resumed_at: w.resumedAt ?? null };
+      existing.push(row);
+      added.push(row);
     }
   }
   for (const [tool, t] of Object.entries(active)) {
@@ -205,7 +209,14 @@ async function handleSync(req, env) {
 
   const fresh = { ...user, tz, codex_state: codexState };
   const s = await statsFor(env, fresh, now);
-  if (s.todayDone && parseNotify(fresh).goal && (await claim(env, user.id, `goal:${s.today}`))) {
+  const prefs = parseNotify(fresh);
+  // たった今リミットに当たった枠があれば「n枠目」を知らせる (過去分の取り込みでは鳴らさない)
+  const justHit = added.filter((w) => now - w.hit_at < 30 * MIN).sort((a, b) => b.hit_at - a.hit_at)[0];
+  if (justHit && (await claim(env, user.id, `hit:${justHit.tool}:${justHit.reset_at}`))) {
+    // 目標達成も同じ通知の中で伝えるので、goal 通知は送り済みにしておく
+    if (s.todayDone) await claim(env, user.id, `goal:${s.today}`);
+    if (prefs.hit) await pushToUser(env, user.id, msg.hit(justHit.tool, s, justHit));
+  } else if (s.todayDone && prefs.goal && (await claim(env, user.id, `goal:${s.today}`))) {
     await pushToUser(env, user.id, msg.goal(s));
   }
   return json({ ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak });
@@ -251,7 +262,7 @@ async function cliVerify(req, env, user) {
     env.DB.prepare("INSERT INTO cli_tokens (token_hash, user_id, platform, created_at) VALUES (?, ?, ?, ?)").bind(await sha256(token), user.id, row.platform, Date.now()),
     env.DB.prepare("UPDATE cli_logins SET user_id = ?, token = ? WHERE device_code = ?").bind(user.id, token, row.device_code),
   ]);
-  return html(pages.message("✅ PC を連携しました", "ターミナルに戻ってください。セットアップが自動で進みます。", "/me", "ダッシュボードへ"));
+  return html(pages.message("✅ PC を連携しました", "このタブは閉じて大丈夫です。ターミナルでセットアップが進み、元の画面に記録が表示されます。", user.onboarded_at ? "/me" : "/welcome", user.onboarded_at ? "ダッシュボードへ" : "セットアップに戻る", user));
 }
 
 // ---------- settings / push ----------
@@ -275,6 +286,28 @@ async function subscribe(req, env, user) {
   await env.DB.prepare("INSERT INTO push_subs (endpoint, user_id, p256dh, auth, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth")
     .bind(endpoint, user.id, keys.p256dh, keys.auth, Date.now()).run();
   return json({ ok: true });
+}
+
+// オンボーディングで「連携できた！」の瞬間に見せる要約
+async function meSummary(env, user) {
+  const ws = await userWindows(env, user.id, 60);
+  const cli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
+  const delays = ws.map(delayOf).filter((d) => d != null);
+  const s = await statsFor(env, user);
+  return {
+    user: { login: user.login, tz: user.tz, goal: user.goal },
+    linked: cli.n > 0,
+    lastSyncAt: user.last_sync_at,
+    history: {
+      total: ws.length,
+      claude: ws.filter((w) => w.tool === "claude").length,
+      codex: ws.filter((w) => w.tool === "codex").length,
+      avgLateMin: delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length / MIN) : null,
+      lostMin: Math.round(delays.reduce((a, b) => a + b, 0) / MIN),
+      bestDay: Math.max(s.bestDay, s.todayCount),
+    },
+    stats: { streak: s.streak, todayCount: s.todayCount, goal: s.goal, xp: s.xp, weekXp: s.weekXp },
+  };
 }
 
 // ---------- pages data ----------
@@ -414,15 +447,24 @@ async function route(req, env) {
     if (!user) return redirect(`/login?next=${encodeURIComponent(p + url.search)}`);
     return cliVerify(req, env, user);
   }
+  if (p === "/welcome") {
+    if (!user) return redirect("/login?next=/welcome");
+    return html(pages.welcome(user, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "" }));
+  }
   if (p === "/me") {
     if (!user) return redirect("/login?next=/me");
+    if (!user.onboarded_at) return redirect("/welcome");
     const hasCli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
     return html(pages.dashboard(user, await statsFor(env, user), { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, notify: parseNotify(user) }));
   }
   if (p.startsWith("/api/")) {
     if (!user) return json({ error: "unauthorized" }, 401);
     if (m === "POST" && !sameOrigin(req)) return json({ error: "forbidden" }, 403);
-    if (p === "/api/me" && m === "GET") return json({ user: { login: user.login, tz: user.tz, goal: user.goal }, stats: await statsFor(env, user) });
+    if (p === "/api/me" && m === "GET") return json(await meSummary(env, user));
+    if (p === "/api/onboarded" && m === "POST") {
+      await env.DB.prepare("UPDATE users SET onboarded_at = COALESCE(onboarded_at, ?) WHERE id = ?").bind(Date.now(), user.id).run();
+      return json({ ok: true });
+    }
     if (p === "/api/settings" && m === "POST") return saveSettings(req, env, user);
     if (p === "/api/push/subscribe" && m === "POST") return subscribe(req, env, user);
     if (p === "/api/push/unsubscribe" && m === "POST") {
