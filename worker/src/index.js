@@ -602,7 +602,10 @@ async function profileData(env, u, now = Date.now()) {
     env.DB.prepare("SELECT start_at FROM opened_windows WHERE user_id = ?").bind(u.id).all(),
     userSessions(env, u.id),
   ]);
-  const s = computeStats(ws, { tz: u.tz, goal: u.goal, now, weekly, sessions, seed: u.id });
+  // 今の 5時間枠の使用率 (次の枠のマスに出す) は、ダッシュボードと同じく PC から届いた予定を使う
+  let nextReset = {};
+  try { nextReset = JSON.parse(u.next_reset || "{}"); } catch {}
+  const s = { ...computeStats(ws, { tz: u.tz, goal: u.goal, now, weekly, sessions, seed: u.id }), nextReset };
   return { s, p: profileStats(ws, opened, s, { tz: u.tz, now }), loss: lossSummary(ws, now) };
 }
 
