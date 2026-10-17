@@ -887,3 +887,37 @@ body.pwa { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 .mini-ring .tool-icon, .mini-ring .tool-icon svg { width: 16px; height: 16px; }
 .mini-text { font-size: 10px; }
 @media (min-width: 721px) { .dial-area.has-dock { grid-template-columns: minmax(0, 1fr) 60px; } .mini-ring { width: 44px; height: 44px; } }
+
+/* リーグ: 今のゾーンを色で (昇格 = 緑 / 残留 = 青 / 降格 = 赤) */
+.lg-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 12px 0 0; padding: 10px 14px; border-radius: 14px; font-size: 13px; font-weight: 700; }
+.lg-status b { font-size: 15px; }
+.lg-status.up { background: color-mix(in srgb, var(--go) 18%, transparent); color: color-mix(in srgb, var(--go) 75%, var(--ink)); }
+.lg-status.stay { background: color-mix(in srgb, #3B82F6 14%, transparent); color: color-mix(in srgb, #3B82F6 70%, var(--ink)); }
+.lg-status.down { background: color-mix(in srgb, #E5484D 16%, transparent); color: color-mix(in srgb, #E5484D 75%, var(--ink)); }
+.lg-list li.up:not(.lg-line) { background: color-mix(in srgb, var(--go) 9%, transparent); }
+.lg-list li.down:not(.lg-line) { background: color-mix(in srgb, #E5484D 9%, transparent); }
+.lg-list li.up.you { background: color-mix(in srgb, var(--go) 20%, var(--violet-soft)); }
+.lg-list li.down.you { background: color-mix(in srgb, #E5484D 18%, var(--violet-soft)); }
+.lg-list li.down .rank { color: #E5484D; }
+
+/* リーグの階段 */
+.league { position: relative; }
+.lg-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.lg-top .lg-tabs { margin: 0; }
+.lg-stairs-btn { flex: none; }
+.stairs-scroll { overflow-y: auto; flex: 1; padding: 20px 16px 24px; background: linear-gradient(to top, #F3EFFF, #E4DCFF 50%, #CFE8FF); }
+.stairs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+/* 段は上へ行くほど右へずれる (階段) */
+.st { position: relative; display: flex; align-items: center; margin-left: calc(var(--i) * 4.5%); min-height: 54px; }
+.st-step { flex: 1; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: #fff; color: #1E1B3A; box-shadow: 0 4px 0 rgb(0 0 0 / .12); font-size: 14px; }
+.st-step small { margin-left: auto; font-size: 11px; color: #8B86B5; font-weight: 700; }
+.st-emoji { font-size: 20px; }
+.st.below .st-step { background: #EDE9FF; color: #6B6596; box-shadow: none; }
+.st.above .st-step { background: rgb(255 255 255 / .55); color: #8B86B5; box-shadow: none; }
+.st.here .st-step { background: #5B4BFF; color: #fff; box-shadow: 0 4px 0 #3B2CC9; font-weight: 700; }
+.st.here .st-step small { color: #E4DCFF; }
+.st-limi { position: absolute; left: -6px; top: -30px; width: 40px; height: 40px; z-index: 1; }
+.st-limi .limi-svg .body { fill: #5B4BFF; } .st-limi .limi-svg .flame { fill: #FF7A1A; } .st-limi .limi-svg .cheek { fill: #FF9EC4; opacity: .55; } .st-limi .limi-svg .face { fill: #fff; stroke: #fff; }
+.st-tag { position: absolute; left: 38px; top: -20px; font-size: 11px; font-weight: 700; background: #fff; color: #1E1B3A; padding: 1px 6px; border-radius: 6px; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
+.st.here { margin-top: 26px; }
+@media (prefers-reduced-motion: no-preference) { .st-limi { animation: hop 1.6s ease-in-out infinite; } }

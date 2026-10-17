@@ -54,7 +54,7 @@ function toolsOf(s) {
   return ag ? ["claude", "codex", "antigravity"] : ["claude", "codex"];
 }
 import { clientStrings, tierName, fmtWhen, leagueName } from "./i18n.js";
-import { TIER_EMOJI } from "./league.js";
+import { TIER_EMOJI, LEAGUE_TIERS } from "./league.js";
 
 // 課金プランの表示名。CLI が送ってくる値 → 人が読める名前 (固有名詞なので言語で変えない)
 const PLAN_NAMES = {
@@ -306,9 +306,21 @@ function leagueCards(ctx, data, s, now) {
       </li>`;
       prev = i;
     }
+    // 自分が今どのゾーンか (昇格 / 残留 / 降格) と、次の線まであと何 XP か
+    let status = "";
+    if (L.joined && me >= 0) {
+      const my = L.members[me].xp;
+      const up = L.zones.up, down = L.zones.down;
+      const zone = me < up && my > 0 ? "up" : down && me >= n - down ? "down" : "stay";
+      const need = (i) => Math.max(1, L.members[i].xp - my + 1); // i 番目の人を抜くのに要る XP
+      const detail = zone === "up" ? t("lg.st.upKeep")
+        : zone === "down" ? (n - down - 1 >= 0 ? t("lg.st.toStay", need(n - down - 1).toLocaleString()) : "")
+        : up ? t("lg.st.toUp", need(up - 1).toLocaleString()) : t("lg.st.top");
+      status = `<p class="lg-status ${zone}"><b>${t(`lg.st.${zone}`)}</b>${detail ? `<span>${detail}</span>` : ""}</p>`;
+    }
     const body = !user.public ? `<p class="muted">${t("lg.private")}</p>`
       : !L.joined ? `<p class="muted">${t("lg.notYet", esc(name))}</p>`
-      : `<ol class="board lg-list">${rows}</ol>`;
+      : `${status}<ol class="board lg-list">${rows}</ol>`;
     return `<div class="lg-head"><span class="lg-badge" aria-hidden="true">${TIER_EMOJI[L.tier]}</span><div><h2 class="h3">${t("lg.h", esc(name))}</h2><p class="muted small">${t("lg.ends", esc(fmtWhen(lang, week.end, s.tz)), leagueLeft(ctx, week.end - now))}</p></div></div>
   ${last}
   ${body}`;
@@ -317,9 +329,30 @@ function leagueCards(ctx, data, s, now) {
     ? `<div class="lg-tabs" role="tablist">${data.leagues.map((L, i) => { const [tool, plan] = L.board.split(":"); return `<button type="button" role="tab" class="tab ${i ? "" : "on"}" aria-selected="${i ? "false" : "true"}" data-lg-tab="${i}">${esc(planName(ctx, tool, plan))}</button>`; }).join("")}</div>`
     : "";
   return `<section class="card league" id="league">
-  ${tabs}
+  <div class="lg-top">${tabs || "<span></span>"}<button type="button" class="btn ghost small lg-stairs-btn" data-lg-stairs-open>🪜 ${t("lg.stairs")}</button></div>
   ${data.leagues.map((L, i) => `<div data-lg-panel="${i}" ${i ? "hidden" : ""}>${panel(L)}</div>`).join("")}
+  ${leagueStairs(ctx, data)}
 </section>`;
+}
+
+// リーグの階段: 下のブロンズから上のダイヤモンドまで 10段。いまいる段にリミが立つ (ツールが 2つならそれぞれの段に名札)
+function leagueStairs(ctx, data) {
+  const { t, lang } = ctx;
+  const here = {};
+  for (const L of data.leagues) (here[L.tier] ??= []).push(SHORT_NAME[L.board.split(":")[0]]);
+  const top = Math.max(...data.leagues.map((L) => L.tier));
+  const steps = Array.from({ length: LEAGUE_TIERS }, (_, i) => LEAGUE_TIERS - 1 - i).map((tier) => {
+    const state = here[tier] ? "here" : tier < top ? "below" : "above";
+    return `<li class="st ${state}" style="--i:${tier}">
+      ${here[tier] ? `<span class="st-limi" aria-hidden="true">${limi("happy")}</span><span class="st-tag">${here[tier].map(esc).join(" · ")}</span>` : ""}
+      <span class="st-step"><span class="st-emoji" aria-hidden="true">${TIER_EMOJI[tier]}</span><b>${esc(leagueName(lang, tier))}</b>${tier === LEAGUE_TIERS - 1 ? `<small>${t("lg.stairsTop")}</small>` : ""}</span>
+    </li>`;
+  }).join("");
+  return `<dialog class="road-dialog stairs-dialog" data-lg-stairs aria-label="${esc(t("lg.stairs"))}">
+    <div class="road-bar"><b>🪜 ${t("lg.stairs")}</b><button class="btn ghost small" type="button" data-lg-stairs-close>${t("wr.close")}</button></div>
+    <div class="stairs-scroll"><ol class="stairs">${steps}</ol></div>
+    <p class="road-note">${t("lg.stairsNote")}</p>
+  </dialog>`;
 }
 
 // フレンド (ダッシュボード): フォローしている人がいるときだけ、顔を横に並べた細い帯。リセット待ちの人を先に

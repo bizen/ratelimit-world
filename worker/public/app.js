@@ -102,6 +102,14 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
     if (res.ok) location.reload(); else b.disabled = false;
   });
 
+  // リーグの階段: 開いたら自分の段が見えるところまで送る
+  const stairs = $("[data-lg-stairs]");
+  if (stairs) {
+    $("[data-lg-stairs-open]").addEventListener("click", () => { stairs.showModal(); $(".st.here", stairs)?.scrollIntoView({ block: "center" }); });
+    $("[data-lg-stairs-close]", stairs).addEventListener("click", () => stairs.close());
+    stairs.addEventListener("click", (e) => { if (e.target === stairs) stairs.close(); });
+  }
+
   // リーグのタブ (Claude と ChatGPT の両方に参加しているとき)
   for (const tab of $$("[data-lg-tab]")) tab.addEventListener("click", () => {
     for (const x of $$("[data-lg-tab]")) { x.classList.toggle("on", x === tab); x.setAttribute("aria-selected", x === tab ? "true" : "false"); }
