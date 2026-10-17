@@ -1,12 +1,22 @@
 // サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js、文言は i18n.js。
 // 各ページは ctx = { user, lang, t, path } を受け取る (t は翻訳関数)
 import { TOOL_NAME, addDays, localTime, comboXp, moodOf, dueOf, WINDOW_MS, WRITTEN, writtenLevel } from "./logic.js";
+
+// 小さな枠に出す短い名前
+const SHORT_NAME = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
+
+// 画面に出すツール: Claude Code と Codex はいつも。Antigravity は使っている人だけ
+function toolsOf(s) {
+  const ag = s.nextReset?.antigravity || s.tools?.antigravity || s.lastReset?.antigravity || s.lastHitByTool?.antigravity || (s.todayOpened ?? []).some((o) => o.tool === "antigravity");
+  return ag ? ["claude", "codex", "antigravity"] : ["claude", "codex"];
+}
 import { clientStrings, tierName, fmtWhen, leagueName } from "./i18n.js";
 import { TIER_EMOJI } from "./league.js";
 
 // 課金プランの表示名。CLI が送ってくる値 → 人が読める名前 (固有名詞なので言語で変えない)
 const PLAN_NAMES = {
   claude: { pro: "Claude Pro", max: "Claude Max", max_5x: "Claude Max 5x", max_20x: "Claude Max 20x", team: "Claude Team", enterprise: "Claude Enterprise", unknown: null },
+  antigravity: { unknown: null },
   codex: { free: "ChatGPT Free", plus: "ChatGPT Plus", pro: "ChatGPT Pro", team: "ChatGPT Business", business: "ChatGPT Business", enterprise: "ChatGPT Enterprise", edu: "ChatGPT Edu", unknown: null },
 };
 export const planName = (ctx, tool, plan) =>
@@ -18,6 +28,8 @@ const planBadges = (ctx, u) => [["claude", u.claude_plan], ["codex", u.codex_pla
 const TOOL_ICON = {
   claude: `<span class="tool-icon"><svg viewBox="0 0 16 10" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true"><rect x="2" y="0" width="1.02" height="2.04"/><rect x="2" y="2" width="1.02" height="2.04"/><rect x="3" y="0" width="1.02" height="2.04"/><rect x="4" y="0" width="1.02" height="2.04"/><rect x="3" y="2" width="1.02" height="2.04"/><rect x="5" y="0" width="1.02" height="2.04"/><rect x="6" y="0" width="1.02" height="2.04"/><rect x="6" y="2" width="1.02" height="2.04"/><rect x="5" y="2" width="1.02" height="2.04"/><rect x="7" y="0" width="1.02" height="2.04"/><rect x="8" y="0" width="1.02" height="2.04"/><rect x="8" y="2" width="1.02" height="2.04"/><rect x="7" y="2" width="1.02" height="2.04"/><rect x="9" y="0" width="1.02" height="2.04"/><rect x="10" y="0" width="1.02" height="2.04"/><rect x="10" y="2" width="1.02" height="2.04"/><rect x="9" y="2" width="1.02" height="2.04"/><rect x="11" y="0" width="1.02" height="2.04"/><rect x="12" y="0" width="1.02" height="2.04"/><rect x="12" y="2" width="1.02" height="2.04"/><rect x="13" y="0" width="1.02" height="2.04"/><rect x="13" y="2" width="1.02" height="2.04"/><rect x="0" y="4" width="1.02" height="2.04"/><rect x="1" y="4" width="1.02" height="2.04"/><rect x="2" y="4" width="1.02" height="2.04"/><rect x="2" y="6" width="1.02" height="2.04"/><rect x="3" y="4" width="1.02" height="2.04"/><rect x="4" y="4" width="1.02" height="2.04"/><rect x="4" y="6" width="1.02" height="2.04"/><rect x="3" y="6" width="1.02" height="2.04"/><rect x="5" y="4" width="1.02" height="2.04"/><rect x="6" y="4" width="1.02" height="2.04"/><rect x="6" y="6" width="1.02" height="2.04"/><rect x="5" y="6" width="1.02" height="2.04"/><rect x="7" y="4" width="1.02" height="2.04"/><rect x="8" y="4" width="1.02" height="2.04"/><rect x="8" y="6" width="1.02" height="2.04"/><rect x="7" y="6" width="1.02" height="2.04"/><rect x="9" y="4" width="1.02" height="2.04"/><rect x="10" y="4" width="1.02" height="2.04"/><rect x="10" y="6" width="1.02" height="2.04"/><rect x="9" y="6" width="1.02" height="2.04"/><rect x="11" y="4" width="1.02" height="2.04"/><rect x="12" y="4" width="1.02" height="2.04"/><rect x="12" y="6" width="1.02" height="2.04"/><rect x="11" y="6" width="1.02" height="2.04"/><rect x="13" y="4" width="1.02" height="2.04"/><rect x="14" y="4" width="1.02" height="2.04"/><rect x="13" y="6" width="1.02" height="2.04"/><rect x="15" y="4" width="1.02" height="2.04"/><rect x="3" y="8" width="1.02" height="2.04"/><rect x="5" y="8" width="1.02" height="2.04"/><rect x="10" y="8" width="1.02" height="2.04"/><rect x="12" y="8" width="1.02" height="2.04"/></svg></span>`,
   codex: `<span class="tool-icon"><svg viewBox="-12 -12 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(0) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(60) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(120) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(180) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(240) translate(3.2 0)"/><rect x="-2.7" y="-9.9" width="5.4" height="11.5" rx="2.7" transform="rotate(300) translate(3.2 0)"/></svg></span>`,
+  // Antigravity: 山形の A (公式のロゴではない)
+  antigravity: `<span class="tool-icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3 21.5 20.5h-5.2L12 12.4 7.7 20.5H2.5z"/></svg></span>`,
 };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -465,7 +477,7 @@ function ago(ctx, ms) {
 // 次に新しい枠を開けられる時刻。どれかのツールに今の枠がなければ「今すぐ」(null)。
 // 全ツールが使用中かリミット中なら、いちばん早いリセット時刻
 function nextOpenAt(s, now) {
-  const ends = ["claude", "codex"].map((tool) => {
+  const ends = toolsOf(s).map((tool) => {
     const lim = s.tools[tool]?.resetAt;
     const use = s.nextReset?.[tool]?.resetAt;
     const end = Math.max(lim > now ? lim : 0, use > now ? use : 0);
@@ -493,7 +505,7 @@ function todayTrack(ctx, s, now) {
     const goalMark = i === s.goal ? ` goal" data-goal-label="${t("slot.goal")}` : "";
     if (w) {
       out += `<li class="slot done tool-${w.tool}${goalMark}" style="--i:${i}" data-n="${i}">
-        <b>${i}</b><span class="tool">${w.tool === "claude" ? "Claude" : "Codex"}</span><span class="xp">+${w.xp}</span></li>`;
+        <b>${i}</b><span class="tool">${SHORT_NAME[w.tool]}</span><span class="xp">+${w.xp}</span></li>`;
     } else if (i === n + 1) {
       out += nextSlot(ctx, s, now, i, goalMark, nextLabel);
     } else {
@@ -506,7 +518,7 @@ function todayTrack(ctx, s, now) {
 // 次に使い切る枠: どちらのツールで達成するかはまだ分からないので、上下 2段に分けて
 // それぞれの今の残量 (リセット直後が 100%、使い切ると 0%) を出す。使い切りやすい方 (残量が少ない方) を上、リミット中で使えない方は下
 function nextSlot(ctx, s, now, i, goalMark, nextLabel) {
-  const halves = ["claude", "codex"].map((tool) => {
+  const halves = toolsOf(s).map((tool) => {
     const lim = s.tools[tool]?.state === "limited" && s.tools[tool].resetAt > now ? s.tools[tool].resetAt : null;
     const cur = s.nextReset?.[tool];
     const pct = lim ? null : cur?.resetAt > now ? cur.pct ?? null : 0;
@@ -516,7 +528,7 @@ function nextSlot(ctx, s, now, i, goalMark, nextLabel) {
   const rank = (h) => (h.lim ? -2 : h.pct == null ? -1 : h.pct);
   halves.sort((a, b) => rank(b) - rank(a));
   const half = (h) => `<div class="half tool-${h.tool} ${h.lim ? "locked" : ""}" style="--p:${h.pct == null ? 0 : 100 - h.pct}%">
-      <span class="tool">${h.tool === "claude" ? "Claude" : "Codex"}</span>
+      <span class="tool">${SHORT_NAME[h.tool]}</span>
       <b>${h.lim ? ctx.t("slot.at", localTime(h.lim, s.tz)) : h.pct == null ? "—" : `${100 - Math.round(h.pct)}%`}</b>
     </div>`;
   return `<li class="slot next split${goalMark}" style="--i:${i}" title="${esc(nextLabel)} · +${comboXp(i)} XP">${halves.map(half).join("")}</li>`;
@@ -809,9 +821,8 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
 </section>
 <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
 
-<section class="dials">
-  ${dial(ctx, "claude", s, now)}
-  ${dial(ctx, "codex", s, now)}
+<section class="dials ${toolsOf(s).length === 3 ? "n3" : ""}">
+  ${toolsOf(s).map((tool) => dial(ctx, tool, s, now)).join("")}
 </section>
 
 ${hasCli ? "" : setupCard(ctx, { origin, hasCli, last })}
@@ -915,7 +926,7 @@ function profileRecords(ctx, s, ps) {
   ].filter(Boolean).join("");
   const life = [
     tile(s.xp.toLocaleString(), t("p.totalXp")),
-    tile(String(s.total), t("p.total"), `Claude Code ${ps.byTool.claude} · Codex ${ps.byTool.codex}`),
+    tile(String(s.total), t("p.total"), Object.entries(ps.byTool).filter(([tool, n]) => n > 0 || tool !== "antigravity").map(([tool, n]) => `${TOOL_NAME[tool]} ${n}`).join(" · ")),
     tile(t("p.days", ps.activeDays), t("p.activeDays"), t("p.goalDays", ps.goalDays)),
     ps.firstAt ? tile(fmtDay(lang, new Date(ps.firstAt).toISOString().slice(0, 10), true), t("p.since"), "", "sm") : "",
   ].filter(Boolean).join("");
@@ -956,7 +967,7 @@ export function profile(ctx, u, s, origin, social = {}) {
   ${u.avatar_url ? `<img class="avatar" src="${esc(u.avatar_url)}" alt="">` : ""}
   <div class="ph-main"><h1 class="h2">@${esc(u.login)}</h1>${u.name && u.name !== u.login ? `<p class="muted">${esc(u.name)}</p>` : ""}<p class="plans">${planBadges(ctx, u)}</p>
     <p class="muted small">${[u.created_at ? t("p.joined", esc(new Intl.DateTimeFormat(lang === "ja" ? "ja-JP" : "en-US", { year: "numeric", month: "long" }).format(new Date(u.created_at)))) : "", t("fr.followers", social.followers ?? 0)].filter(Boolean).join(" · ")}</p>
-    ${(social.leagues ?? []).length ? `<p class="lg-tags">${social.leagues.map((l) => `<span class="lg-tag">${TIER_EMOJI[l.tier]} ${esc(t("lg.h", leagueName(lang, l.tier)))} <small>${l.tool === "claude" ? "Claude" : "Codex"}</small></span>`).join("")}</p>` : ""}</div>
+    ${(social.leagues ?? []).length ? `<p class="lg-tags">${social.leagues.map((l) => `<span class="lg-tag">${TIER_EMOJI[l.tier]} ${esc(t("lg.h", leagueName(lang, l.tier)))} <small>${SHORT_NAME[l.tool]}</small></span>`).join("")}</p>` : ""}</div>
   ${followBtn}
 </section>
 ${social.flash === "added" && !self ? `<p class="fr-flash" role="status">${t("fr.added", esc(u.login))} <a href="/@${esc(viewer.login)}#friends">${t("fr.seeAll")}</a></p>` : ""}

@@ -17,7 +17,7 @@ import { spawn, spawnSync, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.6.1";
+const VERSION = "0.7.0";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -333,6 +333,82 @@ export function scanCodex(sinceMs) {
   return { hits, weekly, activity, current, usage, opened: merged };
 }
 
+// ---------- Antigravity ----------
+// Antigravity CLI (agy) はリミットをログに残さない。代わりに `agy -p "/usage" --output-format json` (読み取り専用、トークンを使わない) で、
+// モデルのグループ (Gemini / Claude・GPT) ごとに 5時間枠と週間枠の残り (remaining_fraction) とリセット時刻が分かる。
+// 送るたびに (最短 4分おきに) 聞いて、到達や開けた枠を ~/.ratelimit-world/antigravity.json に貯める
+const AG_FILE = path.join(HOME, "antigravity.json");
+const AG_POLL_MS = 4 * 60000;
+
+function readAgUsage() {
+  const bin = findBin("agy");
+  if (!bin) return null;
+  const r = spawnSync(bin, ["-p", "/usage", "--output-format", "json"], { cwd: os.tmpdir(), timeout: 30000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  if (r.status !== 0 || !r.stdout) return null;
+  try { return JSON.parse(r.stdout).command?.data?.groups ?? null; } catch { return null; }
+}
+
+// 1回分の残量を、これまでの記録に足す (サーバーに送る形に組み立てるのは scanAntigravity)
+export function updateAntigravity(state, groups, now = Date.now()) {
+  const st = { groups: {}, hits: [], weekly: [], opened: [], ...state };
+  st.groups = { ...st.groups };
+  const near = (a, b, ms) => Math.abs(a - b) < ms;
+  for (const g of groups || []) {
+    const bucket = (w) => g.buckets?.find((b) => b.window === w);
+    const five = bucket("5h"), week = bucket("weekly");
+    const at = (b) => (b ? Date.parse(b.reset_time) : NaN);
+    if (week && Number.isFinite(at(week)) && week.remaining_fraction <= 0.001 && !st.weekly.some((h) => near(h.reset, at(week), 6 * HOUR))) {
+      st.weekly.push({ ts: now, reset: at(week), group: g.name });
+    }
+    if (!five || !Number.isFinite(at(five))) continue;
+    const resetAt = at(five), frac = Number(five.remaining_fraction);
+    const prev = st.groups[g.name];
+    // 使っていないグループは、リセット時刻が「今から 5時間後」のまま動き続ける。少しでも使うか、時刻が止まっていれば枠が始まっている
+    const started = frac < 1 || (prev && near(prev.resetAt, resetAt, 2 * 60000) && now - prev.seenAt > 2 * 60000);
+    st.groups[g.name] = { resetAt, frac, seenAt: prev && near(prev.resetAt, resetAt, 2 * 60000) ? prev.seenAt : now };
+    if (!started) continue;
+    const used = Math.round((1 - frac) * 100);
+    const o = st.opened.find((x) => x.group === g.name && near(x.resetAt, resetAt, 15 * 60000));
+    if (o) o.peak = Math.max(o.peak, used);
+    else st.opened.push({ group: g.name, resetAt, peak: used });
+    if (frac <= 0.001 && !st.hits.some((h) => h.group === g.name && near(h.reset, resetAt, 15 * 60000))) st.hits.push({ ts: now, reset: resetAt, group: g.name });
+  }
+  // 70日より前の記録は捨てる
+  const keep = now - 70 * DAY;
+  st.hits = st.hits.filter((h) => h.reset > keep);
+  st.weekly = st.weekly.filter((h) => h.reset > keep);
+  st.opened = st.opened.filter((o) => o.resetAt > keep);
+  st.polledAt = now;
+  return st;
+}
+
+export function scanAntigravity(sinceMs) {
+  let st = readJson(AG_FILE, null);
+  const now = Date.now();
+  if (findBin("agy") && !(st?.polledAt > now - AG_POLL_MS)) {
+    const groups = readAgUsage();
+    if (groups) { st = updateAntigravity(st || {}, groups, now); writeJson(AG_FILE, st); }
+  }
+  if (!st) return { hits: [], weekly: [], activity: [], usage: [], opened: [], current: null };
+  const opened = st.opened.filter((o) => o.resetAt >= sinceMs);
+  // 今の枠: 始まっているグループのうち、残りがいちばん少ないもの
+  let current = null;
+  for (const [name, g] of Object.entries(st.groups)) {
+    if (!(g.resetAt > now) || !opened.some((o) => o.group === name && Math.abs(o.resetAt - g.resetAt) < 15 * 60000)) continue;
+    const pct = Math.round((1 - g.frac) * 100);
+    if (!current || pct > current.pct) current = { resetAt: g.resetAt, pct, at: st.polledAt };
+  }
+  return {
+    hits: st.hits.filter((h) => h.reset >= sinceMs),
+    weekly: st.weekly.filter((h) => h.reset >= sinceMs),
+    // 枠が始まった時刻 (= リセット後に使い始めた時刻) は、リセット時刻の 5時間前で正確に分かる
+    activity: opened.map((o) => o.resetAt - WINDOW_MS),
+    usage: [],
+    opened,
+    current,
+  };
+}
+
 // ---------- plan ----------
 // 課金プランごとにランキングを分けるため、プランの種類だけを読む (メールや組織 ID は読まない)
 export function claudePlan() {
@@ -450,18 +526,19 @@ export function collect(days) {
   // 再開時刻を求めるため、到達より少し前からのログも読む
   const claude = scanClaude(since - WINDOW_MS);
   const codex = scanCodex(since - WINDOW_MS);
-  const windows = [...toWindows("claude", claude), ...toWindows("codex", codex)]
+  const ag = scanAntigravity(since - WINDOW_MS);
+  const windows = [...toWindows("claude", claude), ...toWindows("codex", codex), ...toWindows("antigravity", ag)]
     .filter((w) => w.resetAt >= since)
     .sort((a, b) => a.hitAt - b.hitAt);
   const relayed = (readJson(CLAUDE_USAGE_FILE, {}).weeklyHits ?? []).map((h) => ({ ts: h.hitAt, reset: h.resetAt }));
-  const weeklyHits = [...toWeekly("claude", [...claude.weekly, ...relayed]), ...toWeekly("codex", codex.weekly)].filter((w) => w.resetAt >= since);
+  const weeklyHits = [...toWeekly("claude", [...claude.weekly, ...relayed]), ...toWeekly("codex", codex.weekly), ...toWeekly("antigravity", ag.weekly)].filter((w) => w.resetAt >= since);
   return {
     client: { version: VERSION, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, platform: process.platform },
     windows,
     weeklyHits,
     plans: { claude: claudePlan(), codex: codex.current?.plan ?? null },
-    nextReset: nextResets(claude, codex),
-    sessions: openedSessions(claude, codex, since),
+    nextReset: { ...nextResets(claude, codex), ...(ag.current?.resetAt > Date.now() ? { antigravity: { resetAt: ag.current.resetAt, exact: true, pct: ag.current.pct, at: ag.current.at } } : {}) },
+    sessions: [...openedSessions(claude, codex, since), ...ag.opened.map((o) => ({ tool: "antigravity", startAt: o.resetAt - WINDOW_MS, resetAt: o.resetAt, peakPct: o.peak, exact: true }))],
     output: outputByDay(claude, codex, since),
   };
 }
@@ -521,8 +598,8 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
     }
     log(`sync ok (${reason}) windows=${payload.windows.length}`);
     // すでに入れている人も、Cowork を使っていれば 5分ごとの送信を足す (1回だけ)
-    if (process.platform === "darwin" && !fs.existsSync(timerPlist()) && fs.existsSync(coworkDir()) && realpath(SELF) === realpath(INSTALLED_SCRIPT)) {
-      if (installTimer()) log("timer installed (cowork)");
+    if (process.platform === "darwin" && !fs.existsSync(timerPlist()) && (fs.existsSync(coworkDir()) || findBin("agy")) && realpath(SELF) === realpath(INSTALLED_SCRIPT)) {
+      if (installTimer()) log("timer installed (cowork / antigravity)");
     }
     if (!quiet) console.log(L(`送信しました: ${payload.windows.length} 件。今日 ${r.today ?? "?"} / ${r.goal ?? "?"} 枠、${r.streak ?? 0} 日連続`, `Sent ${payload.windows.length} windows. Today ${r.today ?? "?"}/${r.goal ?? "?"}, ${r.streak ?? 0}-day streak`));
     return true;
@@ -800,7 +877,7 @@ const dur = (ms) => {
   return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m` : `${m}m`;
 };
 const hm = (ms) => new Date(ms).toTimeString().slice(0, 5);
-const NAMES = { claude: "Claude", codex: "Codex" };
+const NAMES = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
 
 // 保存してある状態に、今の時刻を当てはめる (リセット時刻を過ぎていれば「再開待ち」)
 function liveTools(liveClaude) {
@@ -824,7 +901,7 @@ function statusSegment(liveClaude) {
   const st = liveTools(liveClaude);
   if (!st) return "";
   const parts = [`🔥${st.streak} ${st.today}/${st.goal}${L("枠", "")}`];
-  for (const tool of ["claude", "codex"]) {
+  for (const tool of ["claude", "codex", "antigravity"]) {
     const t = st.tools[tool];
     if (!t || t.state === "idle") continue;
     if (t.state === "ready") parts.push(`${NAMES[tool]} ⚡GO`);
@@ -843,13 +920,13 @@ function menubar() {
     console.log(`🔥\n---\n${L("まだ記録がありません。Claude Code か Codex を使うと表示されます", "No data yet. Use Claude Code or Codex to see it here")}`);
     return;
   }
-  const tools = ["claude", "codex"].map((k) => [k, st.tools[k]]).filter(([, t]) => t);
+  const tools = ["claude", "codex", "antigravity"].map((k) => [k, st.tools[k]]).filter(([, t]) => t);
   const ready = tools.some(([, t]) => t.state === "ready");
   const timed = tools.filter(([, t]) => t.resetAt > st.now && t.state !== "weekly").map(([, t]) => t.resetAt).sort((a, b) => a - b);
   const title = ready ? `🔥${st.streak} ⚡GO` : timed.length ? `🔥${st.streak} ⏳${dur(timed[0] - st.now)}` : `🔥${st.streak}`;
   const lines = [title, "---", L(`🔥 ${st.streak}日連続 · 今日 ${st.today}/${st.goal} 枠`, `🔥 ${st.streak}-day streak · today ${st.today}/${st.goal}`)];
   for (const [tool, t] of tools) {
-    const name = tool === "claude" ? "Claude Code" : "Codex";
+    const name = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" }[tool];
     const pct = t.pct != null ? ` ${L(`残り ${100 - Math.round(t.pct)}%`, `${100 - Math.round(t.pct)}% left`)}` : "";
     if (t.state === "ready") lines.push(L(`${name}  ⚡ リセット済み — 今すぐ再開`, `${name}  ⚡ reset — restart now`) + " | color=#16A34A");
     else if (t.state === "weekly") lines.push(L(`${name}  🏆 週間リミット中（${new Date(t.resetAt).toLocaleString()} まで）`, `${name}  🏆 weekly limit (until ${new Date(t.resetAt).toLocaleString()})`));

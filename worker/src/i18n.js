@@ -14,7 +14,7 @@ export function pickLang(req, user) {
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const win = (n) => plural(n, "window", "windows");
 
-const TOOL = { claude: "Claude Code", codex: "Codex" };
+const TOOL = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
 
 export const T = {
   ja: {
@@ -29,6 +29,7 @@ export const T = {
     windows: (n) => `${n}枠`,
     "plan.unknown.claude": "Claude（プラン不明）",
     "plan.unknown.codex": "Codex（プラン不明）",
+    "plan.unknown.antigravity": "Antigravity",
 
     // サーバーからのメッセージ
     "err.login.title": "ログインに失敗しました",
@@ -471,6 +472,7 @@ export const T = {
     windows: (n) => win(n),
     "plan.unknown.claude": "Claude (unknown plan)",
     "plan.unknown.codex": "Codex (unknown plan)",
+    "plan.unknown.antigravity": "Antigravity",
 
     "err.login.title": "Login failed",
     "err.login.retry": "Please try again.",

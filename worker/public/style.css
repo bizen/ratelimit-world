@@ -482,7 +482,7 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .slot.done.tool-codex { background: #fff; color: #0D0D0D; border: 2px solid #E3E3E3; box-shadow: 0 4px 0 #E3E3E3; }
 
 /* 次に使い切る枠: 上下 2段 (使い切りやすい方が上)。各段はそのツールの色で、使用率の分だけ塗る */
-.slot.next.split { padding: 0; gap: 0; overflow: visible; align-content: stretch; grid-template-rows: 1fr 1fr; min-height: 92px; border: 2px solid var(--violet); animation: none; }
+.slot.next.split { padding: 0; gap: 0; overflow: visible; align-content: stretch; grid-template-rows: none; grid-auto-rows: 1fr; min-height: 92px; border: 2px solid var(--violet); animation: none; }
 .slot.split .half { position: relative; display: grid; justify-items: center; align-content: center; padding: 2px; overflow: hidden; }
 .slot.split .half + .half { border-top: 2px solid var(--violet); }
 .slot.split .half::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--p); z-index: 0; }
@@ -589,7 +589,7 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .stat.flame span { font-size: 15px; }
 /* ペースの箱の 2行目: 文を削らずに収める。等幅より幅の狭い本文の書体にして、入りきらなければ 2行に折り返す。
    箱の高さは 2行ぶんで固定し、1行のときも同じ大きさにする */
-.pace { height: 70px; }
+.pace { height: 78px; }
 .pace span { font: 700 12px/1.25 var(--body); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; text-wrap: balance; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 
 /* キャラクター「リミ」と吹き出し */
@@ -801,3 +801,20 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 .warmup-set .wu-align label { flex-wrap: wrap; gap: 6px; }
 .warmup-set .wu-label { flex-basis: 100%; }
 .warmup-set .wu-preview { margin: 0; font-size: 13px; color: var(--violet); font-weight: 700; }
+
+/* Antigravity (使っている人だけ 3枚目のダイヤル) */
+.dials.n3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 720px) { .dials.n3 { grid-template-columns: 1fr 1fr; } .dials.n3 > :nth-child(3) { grid-column: 1 / -1; } }
+.dial.tool-antigravity { background: #EEF4FF; border-color: #C9DAFB; color: #0B2A66; box-shadow: 0 2px 0 #C9DAFB; }
+.dial.tool-antigravity .tool-icon { width: 22px; height: 22px; color: #1A73E8; }
+.dial.tool-antigravity .tool-icon svg { width: 22px; height: 22px; }
+.dial.tool-antigravity .track { stroke: #DCE6FB; }
+.dial.tool-antigravity .fill { stroke: #1A73E8; }
+.dial.ready.tool-antigravity .fill { stroke: var(--go); }
+.dial.tool-antigravity .ring-text small { color: #4A5F8A; }
+.dial.tool-antigravity .dial-foot { border-top-color: #DCE6FB; background: #F5F8FF; }
+.dial.tool-antigravity .dial-foot dt { color: #4A5F8A; }
+.dial.tool-antigravity .pace.neutral { background: #E1EBFD; color: #0B2A66; border: 0; }
+.slot.split .half.tool-antigravity { background: #EEF4FF; color: #0B57D0; }
+.slot.split .half.tool-antigravity::before { background: #C9DAFB; }
+.slot.done.tool-antigravity { background: #1A73E8; color: #fff; border: 2px solid #0B57D0; box-shadow: 0 4px 0 #0B57D0; }

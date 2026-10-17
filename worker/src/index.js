@@ -205,7 +205,7 @@ async function follow(req, env, user) {
 }
 
 // ---------- leagues ----------
-const LEAGUE_TOOLS = ["claude", "codex"];
+const LEAGUE_TOOLS = ["claude", "codex", "antigravity"];
 const boardOf = (u, tool) => `${tool}:${u[`${tool}_plan`] || "unknown"}`;
 
 // 同期のたびに: 今週 (と、まだ確定していない先週) のリーグの XP を更新する。
@@ -320,7 +320,7 @@ async function pushToUser(env, userId, message) {
 }
 
 // ---------- CLI からの送信 ----------
-const TOOLS = new Set(["claude", "codex"]);
+const TOOLS = new Set(["claude", "codex", "antigravity"]);
 const isTime = (n) => Number.isFinite(n) && n > 1.5e12 && n < 4e12;
 
 async function handleSync(req, env) {
@@ -484,7 +484,7 @@ async function handleSync(req, env) {
     // 正式なドメインに移ったら、PC の CLI に送り先を切り替えてもらう
     ...(env.CANONICAL_ORIGIN ? { server: env.CANONICAL_ORIGIN } : {}),
     // PC のステータスライン・メニューバー用 (PC 側が保存し、残り時間はその場で計算する)
-    status: { streak: s.streak, today: s.todayCount, goal: s.goal, tools: { claude: toolStatus(s, "claude", now), codex: toolStatus(s, "codex", now) } },
+    status: { streak: s.streak, today: s.todayCount, goal: s.goal, tools: Object.fromEntries([...TOOLS].map((tool) => [tool, toolStatus(s, tool, now)])) },
   });
 }
 

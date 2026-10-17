@@ -178,7 +178,7 @@ test("yesterday's count and the last time a limit was hit", () => {
   const ws = [...daysOf(1, "2026-10-15", 3), win("codex", "2026-10-16T09:30:00", "2026-10-16T12:00:00", null)];
   const s = computeStats(ws, { tz: TZ, goal: 2, now: jst("2026-10-16T14:00:00") });
   assert.equal(s.yesterdayCount, 3);
-  assert.deepEqual(s.yesterdayByTool, { claude: 2, codex: 1 });
+  assert.deepEqual(s.yesterdayByTool, { claude: 2, codex: 1, antigravity: 0 });
   assert.equal(s.lastHitByTool.codex, jst("2026-10-16T09:30:00"));
   assert.equal(s.lastHitByTool.claude, jst("2026-10-15T12:00:00"));
 });
@@ -260,7 +260,7 @@ test("profileStats: bests, restarts and patterns", async () => {
   assert.equal(p.lostMin, 23);
   assert.equal(p.topHour, 15);
   assert.equal(p.topWeekday, 0);
-  assert.deepEqual(p.byTool, { claude: 3, codex: 1 });
+  assert.deepEqual(p.byTool, { claude: 3, codex: 1, antigravity: 0 });
   assert.equal(p.activeDays, 2);
   assert.equal(p.goalDays, 1);
   assert.equal(p.bestWeek.week, "2026-10-05");

@@ -37,7 +37,8 @@ export function questIdsFor(seed, day) {
 }
 export const FREEZE_EVERY = 7;          // 7日連続ごとにフリーズを 1つもらえる
 
-export const TOOL_NAME = { claude: "Claude Code", codex: "Codex" };
+export const TOOL_NAME = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
+export const TOOL_IDS = Object.keys(TOOL_NAME);
 
 export function validTz(tz) {
   try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
@@ -367,8 +368,8 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     todayCount,
     yesterdayCount: days[addDays(today, -1)]?.count ?? 0,
     // ツールごとの「昨日の枠数」と「最後にリミットに当たった時刻」(ダイヤルの下に出す)
-    yesterdayByTool: { claude: days[addDays(today, -1)]?.claude ?? 0, codex: days[addDays(today, -1)]?.codex ?? 0 },
-    lastHitByTool: Object.fromEntries(["claude", "codex"].map((tool) => [tool, ws.filter((w) => w.tool === tool).at(-1)?.hit_at ?? null])),
+    yesterdayByTool: Object.fromEntries(TOOL_IDS.map((tool) => [tool, days[addDays(today, -1)]?.[tool] ?? 0])),
+    lastHitByTool: Object.fromEntries(TOOL_IDS.map((tool) => [tool, ws.filter((w) => w.tool === tool).at(-1)?.hit_at ?? null])),
     todayWindows,
     todayOpened,
     todayQuests,
@@ -439,7 +440,7 @@ export function profileStats(ws, opened, s, { tz = "UTC", now = Date.now() } = {
   const active = Object.values(s.days).filter((d) => d.count > 0);
   return {
     bestDay, bestOpened, bestWeek, bestQuickRun,
-    byTool: { claude: sorted.filter((w) => w.tool === "claude").length, codex: sorted.filter((w) => w.tool === "codex").length },
+    byTool: Object.fromEntries(TOOL_IDS.map((tool) => [tool, sorted.filter((w) => w.tool === tool).length])),
     activeDays: active.length,
     goalDays: active.filter((d) => d.count >= s.goal).length,
     restarts: delays.length,
