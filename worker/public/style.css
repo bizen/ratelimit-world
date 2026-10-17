@@ -921,3 +921,6 @@ body.pwa { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 .st-tag { position: absolute; left: 38px; top: -20px; font-size: 11px; font-weight: 700; background: #fff; color: #1E1B3A; padding: 1px 6px; border-radius: 6px; box-shadow: 0 1px 3px rgb(0 0 0 / .15); }
 .st.here { margin-top: 26px; }
 @media (prefers-reduced-motion: no-preference) { .st-limi { animation: hop 1.6s ease-in-out infinite; } }
+/* 階段のウィンドウ: 中身の高さに頼らず、画面に合わせた高さを決める (短く潰れないように) */
+.stairs-dialog { height: min(820px, calc(100dvh - 32px)); }
+.stairs-dialog .stairs-scroll { min-height: 0; }
