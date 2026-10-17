@@ -7,6 +7,25 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const WINDOW_MS = 5 * 3600 * 1000;
 
+  // ---------- ホーム画面のアプリ (PWA) ----------
+  // ブラウザのボタンや引っ張って更新がないので、右下に更新ボタンを出す。
+  // 開きっぱなしで数字が古くならないよう、5分以上たってから戻ってきたら自動で読み直す
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (standalone) {
+    const loadedAt = Date.now();
+    const btn = document.createElement("button");
+    btn.className = "refresh-fab";
+    btn.type = "button";
+    btn.setAttribute("aria-label", T("c.refresh"));
+    btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    btn.addEventListener("click", () => { btn.classList.add("spin"); location.reload(); });
+    document.body.append(btn);
+    document.body.classList.add("pwa");
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && Date.now() - loadedAt > 5 * 60000) location.reload();
+    });
+  }
+
   // ---------- countdown ----------
   const pad = (n) => String(n).padStart(2, "0");
   function tick() {
