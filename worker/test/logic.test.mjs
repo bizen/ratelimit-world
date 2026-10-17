@@ -305,3 +305,36 @@ test("written level: steps, progress and the last level", async () => {
   assert.equal(WRITTEN[top.next][0], "akashic");
   assert.equal(top.left, Infinity);
 });
+
+test("warmupPlan: same times every day (anchor 08:00, Tokyo)", async () => {
+  const { warmupPlan } = await import("../src/logic.js");
+  const T = (s) => Date.parse(`${s}+09:00`);
+  const plan = (s) => new Date(warmupPlan(T(s), "08:00", "Asia/Tokyo")).toISOString();
+  const iso = (s) => new Date(T(s)).toISOString();
+  assert.equal(plan("2026-10-17T13:00:00"), iso("2026-10-17T13:00:00"));   // 予定どおり
+  assert.equal(plan("2026-10-17T12:30:00"), iso("2026-10-17T13:00:00"));   // 30分待ってそろえる
+  assert.equal(plan("2026-10-17T11:30:00"), iso("2026-10-17T11:30:00"));   // 90分は待たない
+  assert.equal(plan("2026-10-17T04:00:00"), iso("2026-10-17T08:00:00"));   // 夜の休み → 朝にそろえる
+  assert.equal(plan("2026-10-17T23:30:00"), iso("2026-10-17T23:30:00"));   // ずれたまま始める
+  assert.equal(plan("2026-10-18T04:30:00"), iso("2026-10-18T08:00:00"));   // 次の朝にはそろう
+  assert.equal(plan("2026-10-17T08:00:00"), iso("2026-10-17T08:00:00"));
+  assert.equal(plan("2026-10-17T13:00:05"), iso("2026-10-17T13:00:05"));   // 数秒の遅れはそのまま
+  assert.equal(warmupPlan(T("2026-10-17T12:30:00"), null, "Asia/Tokyo"), T("2026-10-17T12:30:00"));
+});
+
+test("delays are counted from the planned restart time (due_at)", () => {
+  const H = 3600e3, M = 60e3;
+  const reset = jst("2026-10-16T04:00:00"), due = jst("2026-10-16T08:00:00");
+  // 04:00 にリセット、そろえて 08:00 に始める予定、08:01 に再開 → 即スタート
+  const ws = [{ tool: "claude", hit_at: reset - 3 * H, reset_at: reset, due_at: due, resumed_at: due + M }];
+  const s = computeStats(ws, { tz: TZ, goal: 1, now: jst("2026-10-16T09:00:00") });
+  const r = s.todayResets[0];
+  assert.equal(r.dueAt, due);
+  assert.equal(r.quick, true);
+  assert.equal(r.delayMin, 1);
+  assert.equal(delayOf(ws[0]), M);
+  // 予定の時刻の前は「待っている」ではない
+  const s2 = computeStats([{ ...ws[0], resumed_at: null }], { tz: TZ, goal: 1, now: jst("2026-10-16T07:00:00") });
+  assert.equal(s2.todayResets[0].passed, false);
+  assert.equal(s2.todayResets[0].waiting, false);
+});

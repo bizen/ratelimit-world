@@ -796,3 +796,8 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 /* 自動ウォームアップ (設定) */
 .warmup a { color: var(--violet); font-weight: 700; }
 .warmup.on { background: color-mix(in srgb, var(--go) 14%, transparent); }
+.warmup-set .wu-align { margin: 6px 0 0 28px; display: grid; gap: 4px; font-size: 14px; font-weight: 700; }
+.warmup-set .wu-align select { width: auto; min-width: 0; flex: none; padding-right: 28px; }
+.warmup-set .wu-align label { flex-wrap: wrap; gap: 6px; }
+.warmup-set .wu-label { flex-basis: 100%; }
+.warmup-set .wu-preview { margin: 0; font-size: 13px; color: var(--violet); font-weight: 700; }

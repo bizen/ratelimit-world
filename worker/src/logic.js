@@ -92,10 +92,43 @@ export function weekKey(ms, tz) {
   return addDays(dayKey(ms, tz), -DOW[parts(ms, tz).weekday]);
 }
 
-// リセットから再開までの時間。再開していない・休憩とみなす場合は null
+// ---------- 自動ウォームアップ: 毎日同じ時刻にそろえる ----------
+// 予定の時刻より前にリセットされたら、この時間までなら待ってそろえる (それより早ければすぐ始め、翌朝そろえ直す)
+export const WARMUP_MAX_WAIT = 60 * MIN;
+
+// t 以降で最初に来る、ユーザーのタイムゾーンでの anchor ("08:00") の時刻 (分単位。夏時間の切り替わりは近似)
+export function nextAnchor(t, anchor, tz) {
+  const [h, m] = anchor.split(":").map(Number);
+  const p = parts(t, tz);
+  const diff = ((h * 60 + m) - ((+p.hour) * 60 + (+p.minute)) + 24 * 60) % (24 * 60);
+  const at = t - (t % MIN) + diff * MIN;
+  return at < t ? at + DAY : at;
+}
+
+// 時刻 t (リセット時刻、または今) 以降で、次の枠を始める時刻。anchor がなければ t のまま (リセットの瞬間に始める)。
+//   1) 始めると 5時間後に次の anchor をまたぐなら、anchor まで待つ (夜の休みと、毎朝のそろえ直し)
+//   2) その日の予定 (anchor から 5時間ごと) が WARMUP_MAX_WAIT 以内に来るなら、そこまで待つ
+//   3) それより先なら、すぐ始める (その日はずれたまま、翌朝そろう)
+export function warmupPlan(t, anchor, tz) {
+  if (!anchor) return t;
+  const A = nextAnchor(t, anchor, tz);
+  if (t < A && t + WINDOW_MS > A) return A;
+  if (t === A) return t;
+  let S = A;
+  for (let k = 0; WINDOW_MS * (k + 1) <= DAY; k++) {
+    const slot = A - DAY + k * WINDOW_MS;
+    if (slot >= t) { S = slot; break; }
+  }
+  return S - t <= WARMUP_MAX_WAIT ? S : t;
+}
+
+// 予定の再開時刻 (ふつうはリセット時刻。毎日そろえる設定なら、そろえた時刻)。出遅れはここから数える
+export const dueOf = (w) => w.due_at ?? w.reset_at;
+
+// 予定の再開時刻から再開までの時間。再開していない・休憩とみなす場合は null
 export function delayOf(w) {
   if (w.resumed_at == null) return null;
-  const d = Math.max(0, w.resumed_at - w.reset_at);
+  const d = Math.max(0, w.resumed_at - dueOf(w));
   return d <= CHASE_MS ? d : null;
 }
 
@@ -151,10 +184,10 @@ export function moodOf(s, now) {
   const passed = (s.todayResets ?? []).filter((r) => r.passed && !r.rest);
   const last = passed.at(-1);
   if (last?.waiting) {
-    const m = Math.round((now - last.resetAt) / MIN);
+    const m = Math.round((now - last.dueAt) / MIN);
     return m <= 10 ? { mood: "excited", key: "go", tool: last.tool } : { mood: "sad", key: "waiting", m, tool: last.tool };
   }
-  if (last && now - last.resetAt < 2 * HOUR) {
+  if (last && now - last.dueAt < 2 * HOUR) {
     return last.quick ? { mood: "happy", key: "quick", m: last.ticket ? 0 : last.delayMin ?? 0 } : { mood: "sad", key: "late", m: last.delayMin ?? 0 };
   }
   const left = Math.max(0, s.goal - s.todayCount);
@@ -202,12 +235,13 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
     const hk = dayKey(w.hit_at, tz);
     if (+localTime(w.hit_at, tz).slice(0, 2) < 12) qd(hk).beforeNoon = true;
     qd(hk).lastAt = Math.max(qd(hk).lastAt ?? 0, w.hit_at);
-    if (w.reset_at > now) continue;
-    const d = w.resumed_at != null ? Math.max(0, w.resumed_at - w.reset_at) : now - w.reset_at;
+    const due = dueOf(w);
+    if (due > now) continue;
+    const d = w.resumed_at != null ? Math.max(0, w.resumed_at - due) : now - due;
     if (!w.ended_at && d > CHASE_MS) continue; // 休憩扱い
-    const r = qd(dayKey(w.reset_at, tz));
+    const r = qd(dayKey(due, tz));
     r.resets++;
-    r.lastAt = Math.max(r.lastAt ?? 0, w.resumed_at ?? w.reset_at);
+    r.lastAt = Math.max(r.lastAt ?? 0, w.resumed_at ?? due);
     const done = w.ended_at || w.resumed_at != null;
     if (w.ended_at || (done && d <= QUICK_MS)) r.quick++;
     if (w.ended_at || (done && d <= 15 * MIN)) r.quick15++;
@@ -264,8 +298,8 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
   // 即スタート連続: 新しい枠から順に、5分以内に再開できた回数
   let quickRun = 0;
   for (const w of [...ws].sort((a, b) => b.reset_at - a.reset_at)) {
-    if (w.reset_at > now) continue;                                       // まだリセット前
-    if (w.resumed_at == null && now - w.reset_at < CHASE_MS) continue;     // 再開待ち
+    if (dueOf(w) > now) continue;                                          // まだ再開の予定前
+    if (w.resumed_at == null && now - dueOf(w) < CHASE_MS) continue;       // 再開待ち
     const d = delayOf(w);
     if (d != null && d <= QUICK_MS) quickRun++;
     else break;
@@ -275,7 +309,7 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
   const tools = {};
   for (const w of ws) {
     if (w.reset_at > now && (!tools[w.tool] || w.reset_at > tools[w.tool].resetAt)) {
-      tools[w.tool] = { state: "limited", resetAt: w.reset_at, hitAt: w.hit_at };
+      tools[w.tool] = { state: "limited", resetAt: w.reset_at, hitAt: w.hit_at, dueAt: dueOf(w) };
     }
   }
   const lastReset = {};
@@ -307,19 +341,21 @@ export function computeStats(windows, { tz = "UTC", goal = 2, now = Date.now(), 
   }
 
   // 「リセット後すぐ再開」タスク: 今日リセットされた (される) 使い切りの枠ごとに、再開までの時間
-  const todayResets = ws.filter((w) => dayKey(w.reset_at, tz) === today).map((w) => {
-    const passed = w.reset_at <= now;
-    const d = w.resumed_at != null ? Math.max(0, w.resumed_at - w.reset_at) : null;
+  // 時刻は「予定の再開時刻」(毎日そろえる設定なら、そろえた時刻) で数える
+  const todayResets = ws.filter((w) => dayKey(dueOf(w), tz) === today).map((w) => {
+    const due = dueOf(w);
+    const passed = due <= now;
+    const d = w.resumed_at != null ? Math.max(0, w.resumed_at - due) : null;
     const ticket = !!w.ended_at;
     // 3時間以上あとの再開 (または 3時間以上たっても未再開) は寝ていた・休んでいたとみなし、タスクに数えない
-    const rest = !ticket && passed && (d != null ? d > CHASE_MS : now - w.reset_at > CHASE_MS);
+    const rest = !ticket && passed && (d != null ? d > CHASE_MS : now - due > CHASE_MS);
     return {
-      tool: w.tool, resetAt: w.reset_at, passed, ticket, rest,
+      tool: w.tool, resetAt: w.reset_at, dueAt: due, scheduled: due > w.reset_at, passed, ticket, rest,
       delayMin: d == null ? null : Math.round(d / MIN),
       quick: ticket || (d != null && d <= QUICK_MS),
       waiting: passed && !rest && w.resumed_at == null,
     };
-  }).sort((a, b) => a.resetAt - b.resetAt);
+  }).sort((a, b) => a.dueAt - b.dueAt);
 
   // 今日を除いた 1日の最多枠数 (今日それを超えたら自己ベスト更新)
   let bestDay = 0;
@@ -384,7 +420,7 @@ export function profileStats(ws, opened, s, { tz = "UTC", now = Date.now() } = {
   const delays = [];
   let run = 0, bestQuickRun = 0;
   for (const w of sorted) {
-    if (w.reset_at > now) continue;
+    if (dueOf(w) > now) continue;
     const d = delayOf(w);
     if (d == null) continue;
     delays.push(d);

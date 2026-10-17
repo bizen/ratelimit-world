@@ -1,6 +1,6 @@
 // サーバーで組み立てる HTML。見た目は public/style.css、動きは public/app.js、文言は i18n.js。
 // 各ページは ctx = { user, lang, t, path } を受け取る (t は翻訳関数)
-import { TOOL_NAME, addDays, localTime, comboXp, moodOf, WINDOW_MS, WRITTEN, writtenLevel } from "./logic.js";
+import { TOOL_NAME, addDays, localTime, comboXp, moodOf, dueOf, WINDOW_MS, WRITTEN, writtenLevel } from "./logic.js";
 import { clientStrings, tierName, fmtWhen, leagueName } from "./i18n.js";
 import { TIER_EMOJI } from "./league.js";
 
@@ -527,12 +527,12 @@ function quickTask(ctx, s, now) {
   const { t } = ctx;
   const rows = s.todayResets.map((r) => {
     const cls = !r.passed ? "future" : r.rest ? "rest" : r.quick ? "ok" : r.waiting ? "wait" : "late";
-    const what = !r.passed ? t("reset.future")
+    const what = !r.passed ? t(r.scheduled ? "reset.scheduled" : "reset.future")
       : r.rest ? t("reset.rest")
       : r.ticket ? t("reset.ticket")
-      : r.waiting ? t("reset.waiting", Math.round((now - r.resetAt) / 60000))
+      : r.waiting ? t("reset.waiting", Math.round((now - r.dueAt) / 60000))
       : t("reset.after", r.delayMin);
-    return `<li class="${cls}"><time>${localTime(r.resetAt, s.tz)}</time><span class="tool">${TOOL_NAME[r.tool]}</span><span class="what">${what}${cls === "ok" ? " ✓" : ""}</span></li>`;
+    return `<li class="${cls}"><time>${localTime(r.dueAt, s.tz)}</time><span class="tool">${TOOL_NAME[r.tool]}</span><span class="what">${what}${cls === "ok" ? " ✓" : ""}</span></li>`;
   }).join("");
   return rows ? `<ul class="resets">${rows}</ul>` : `<p class="muted small">${t("reset.none")}</p>`;
 }
@@ -608,7 +608,7 @@ function dial(ctx, tool, s, now) {
   const last = s.lastReset[tool];
   const lock = s.weeklyLocks.find((w) => w.tool === tool);
   // リングの下の箱 (どの状態でも同じ大きさ)。ペースが分かるときだけ緑/赤、それ以外は落ち着いた色
-  let state, resetAt = null, usedPct = null, box;
+  let state, resetAt = null, usedPct = null, box, dueLater = null;
   if (lock) {
     state = "weekly";
     resetAt = lock.resetAt;
@@ -617,6 +617,8 @@ function dial(ctx, tool, s, now) {
     state = "limited";
     resetAt = x.resetAt;
     usedPct = 100;
+    // 毎日そろえる設定で、リセットのあと予定の時刻まで待つなら、リセットの瞬間に「GO」ではなく待機に切り替える
+    if (x.dueAt > x.resetAt) dueLater = x.dueAt;
     box = { icon: BOLT, title: t("box.limited"), detail: t("box.resetAt", localTime(x.resetAt, s.tz)) };
   } else if (s.nextReset?.[tool]?.resetAt > now) {
     // 使用中 (中継オフの Claude Code はリセット時刻が推定で、使用率は不明)
@@ -625,9 +627,14 @@ function dial(ctx, tool, s, now) {
     resetAt = r.resetAt;
     usedPct = r.pct ?? null;
     box = { title: t("box.using"), detail: t(r.exact ? "box.resetAt" : "box.resetAbout", localTime(r.resetAt, s.tz)) };
-  } else if (last && last.resumed_at == null && now - last.reset_at < 3 * 3600 * 1000) {
+  } else if (last && last.resumed_at == null && dueOf(last) > now) {
+    // 毎日そろえる設定で、予定の時刻を待っているところ (自動ウォームアップがその時刻に始める)
+    state = "scheduled";
+    resetAt = dueOf(last);
+    box = { title: t("box.scheduled"), detail: t("box.scheduledAt", localTime(resetAt, s.tz)) };
+  } else if (last && last.resumed_at == null && now - dueOf(last) < 3 * 3600 * 1000) {
     state = "ready";
-    box = { title: t("dial.ready"), detail: t("box.resetDone", localTime(last.reset_at, s.tz)) };
+    box = { title: t("dial.ready"), detail: t("box.resetDone", localTime(dueOf(last), s.tz)) };
   } else {
     state = "idle";
     box = { title: t("dial.idle"), detail: t("box.idle") };
@@ -651,7 +658,7 @@ function dial(ctx, tool, s, now) {
   if (state === "weekly") frac = 1;
   return `
 <article class="dial tool-${tool} ${state} ${raceOn ? (ahead ? "race ahead" : "race behind") : ""}" data-tool="${tool}" data-tz="${esc(s.tz)}"
-  ${resetAt ? `data-reset="${resetAt}"` : ""} ${start ? `data-start="${start}"` : ""} ${usedPct != null ? `data-pct="${usedPct}"` : ""} ${state === "ready" ? `data-since="${last.reset_at}"` : ""}>
+  ${resetAt ? `data-reset="${resetAt}"` : ""} ${start ? `data-start="${start}"` : ""} ${usedPct != null ? `data-pct="${usedPct}"` : ""} ${state === "ready" ? `data-since="${dueOf(last)}"` : ""} ${dueLater ? `data-due="${dueLater}"` : ""}>
   <h3>${TOOL_ICON[tool]}${TOOL_NAME[tool]}</h3>
   <div class="ring" ${raceOn ? `role="img" aria-label="${esc(t("dial.raceAria", 100 - Math.round(usedPct), Math.round(elapsed * 100)))}"` : ""}>
     <svg viewBox="0 0 120 120" aria-hidden="true">
@@ -723,6 +730,15 @@ ${setupCard(ctx, { origin, hasCli, last: lastSync(ctx) })}
     </fieldset>
     <fieldset class="warmup-set" id="warmup"><legend>⚡ ${t("wu.h")}</legend>
       <label class="toggle"><input type="checkbox" name="warmup" ${user.warmup ? "checked" : ""}><span>${t("wu.on")}<small class="hint">${t("wu.hint")}</small></span></label>
+      <div class="wu-align" data-wu-align>
+        <label><span class="wu-label">${t("wu.align")}</span>
+          <select name="anchorH" aria-label="${t("wu.alignHour")}"><option value="">${t("wu.alignOff")}</option>${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${user.warmup_anchor && +user.warmup_anchor.slice(0, 2) === h ? "selected" : ""}>${h}</option>`).join("")}</select>
+          :
+          <select name="anchorM" aria-label="${t("wu.alignMinute")}">${[0, 10, 20, 30, 40, 50].map((m) => `<option value="${m}" ${user.warmup_anchor && +user.warmup_anchor.slice(3) === m ? "selected" : ""}>${String(m).padStart(2, "0")}</option>`).join("")}</select>
+        </label>
+        <p class="wu-preview" data-anchor-preview></p>
+        <small class="hint">${t("wu.alignHint")}</small>
+      </div>
     </fieldset>
     <label class="toggle"><input type="checkbox" name="statusline" ${user.claude_statusline ? "checked" : ""}><span>${t("settings.statusline")}<small class="hint">${t("settings.statusline.hint")}</small></span></label>
     <label class="toggle"><input type="checkbox" name="public" ${user.public ? "checked" : ""}><span>${t("settings.public")}</span></label>

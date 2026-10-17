@@ -1,5 +1,5 @@
 // ratelimit.world: Cloudflare Worker (API + ページ + 毎分の通知 Cron)
-import { profileStats, lostWindowsOf, computeStats, validTz, localTime, dayKey, delayOf, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
+import { profileStats, lostWindowsOf, warmupPlan, computeStats, validTz, localTime, dayKey, delayOf, MIN, HOUR, DAY, WINDOW_MS, CHASE_MS } from "./logic.js";
 import { sendPush, b64u } from "./webpush.js";
 import { pickLang, tr, LANGS } from "./i18n.js";
 import { notice } from "./notice.js";
@@ -144,8 +144,19 @@ async function userSessions(env, userId, days = 3) {
   return results;
 }
 
+// 自動ウォームアップで毎日そろえる設定なら、そろえた時刻 (予定の再開時刻) を枠につける。
+// 出遅れ・即スタート・通知・ダッシュボードはこの時刻から数える (待たせた時間を出遅れにしない)
+const anchorOf = (u) => (u.warmup && u.warmup_anchor ? u.warmup_anchor : null);
+function withDue(ws, user) {
+  const anchor = anchorOf(user);
+  if (!anchor) return ws;
+  const since = user.warmup_anchor_since ?? 0;
+  return ws.map((w) => (w.reset_at >= since ? { ...w, due_at: warmupPlan(w.reset_at, anchor, user.tz) } : w));
+}
+
 async function statsFor(env, user, now = Date.now()) {
-  const [ws, weekly, sessions] = await Promise.all([userWindows(env, user.id), userWeekly(env, user.id), userSessions(env, user.id)]);
+  const [raw, weekly, sessions] = await Promise.all([userWindows(env, user.id), userWeekly(env, user.id), userSessions(env, user.id)]);
+  const ws = withDue(raw, user);
   let nextReset = {};
   try { nextReset = JSON.parse(user.next_reset || "{}"); } catch {}
   return { ...computeStats(ws, { tz: user.tz, goal: user.goal, now, weekly, sessions, seed: user.id }), nextReset };
@@ -208,7 +219,7 @@ async function syncLeagues(env, user, now = Date.now()) {
     env.DB.prepare("SELECT m.*, g.settled FROM league_members m JOIN league_groups g ON g.id = m.group_id WHERE m.user_id = ? AND m.week >= ?").bind(user.id, prev.id).all(),
   ]);
   for (const tool of LEAGUE_TOOLS) {
-    const s = computeStats(ws.filter((w) => w.tool === tool), { tz: user.tz, goal: user.goal, now, weekly: weekly.filter((w) => w.tool === tool), seed: user.id });
+    const s = computeStats(withDue(ws.filter((w) => w.tool === tool), user), { tz: user.tz, goal: user.goal, now, weekly: weekly.filter((w) => w.tool === tool), seed: user.id });
     const last = mine.find((m) => m.tool === tool && m.week === prev.id);
     if (last && !last.settled) await env.DB.prepare("UPDATE league_members SET xp = ? WHERE user_id = ? AND tool = ? AND week = ?").bind(leagueXp(s, prev), user.id, tool, prev.id).run();
     const xp = leagueXp(s, week);
@@ -468,13 +479,30 @@ async function handleSync(req, env) {
   }
   return json({
     ok: true, accepted: incoming.length, today: s.todayCount, goal: s.goal, streak: s.streak, lang: user.lang ?? null, statusline: !!user.claude_statusline,
-    // 自動ウォームアップの設定 (PC がリセット時刻に合わせて予約する)
-    warmup: { on: !!user.warmup },
+    // 自動ウォームアップ: PC が予約する時刻 (ツールごと)。オフなら on: false だけ
+    warmup: warmupBookings(fresh, s, now),
     // 正式なドメインに移ったら、PC の CLI に送り先を切り替えてもらう
     ...(env.CANONICAL_ORIGIN ? { server: env.CANONICAL_ORIGIN } : {}),
     // PC のステータスライン・メニューバー用 (PC 側が保存し、残り時間はその場で計算する)
     status: { streak: s.streak, today: s.todayCount, goal: s.goal, tools: { claude: toolStatus(s, "claude", now), codex: toolStatus(s, "codex", now) } },
   });
+}
+
+// 自動ウォームアップで、PC が次に送る時刻 (ツールごと)。
+// since = 今の枠が終わる時刻 (リミット中ならそのリセット、使用中なら予定のリセット、枠がなければ今)。at = そこから毎日そろえる設定を当てた時刻。
+// その課金プランを使っているツールだけ (入れてあるだけのツールを毎日温めない)
+function warmupBookings(user, s, now) {
+  if (!user.warmup) return { on: false };
+  const anchor = anchorOf(user);
+  const at = {};
+  for (const tool of ["claude", "codex"]) {
+    if (!user[`${tool}_plan`]) continue;
+    const lim = s.tools[tool]?.state === "limited" && s.tools[tool].resetAt > now ? s.tools[tool].resetAt : null;
+    const cur = s.nextReset?.[tool]?.resetAt > now ? s.nextReset[tool].resetAt : null;
+    const since = Math.max(lim ?? 0, cur ?? 0) || now;
+    at[tool] = { at: warmupPlan(since, anchor, user.tz), since };
+  }
+  return { on: true, anchor, at };
 }
 
 // ツールの今の状態 (ダイヤルと同じ考え方): weekly / limited / using / ready / idle
@@ -486,7 +514,10 @@ function toolStatus(s, tool, now) {
   const r = s.nextReset?.[tool];
   if (r?.resetAt > now) return { state: "using", resetAt: r.resetAt, pct: r.pct ?? null, exact: !!r.exact };
   const last = s.lastReset[tool];
-  if (last && last.resumed_at == null && now - last.reset_at < 3 * HOUR) return { state: "ready", since: last.reset_at };
+  const due = last ? last.due_at ?? last.reset_at : null;
+  // 毎日そろえる設定で、予定の時刻を待っているところ
+  if (last && last.resumed_at == null && due > now) return { state: "scheduled", resetAt: due };
+  if (last && last.resumed_at == null && now - due < 3 * HOUR) return { state: "ready", since: due };
   return { state: "idle" };
 }
 
@@ -548,8 +579,12 @@ async function saveSettings(req, env, user) {
   const lang = LANGS.includes(b.lang) ? b.lang : user.lang;
   const statusline = typeof b.statusline === "boolean" ? (b.statusline ? 1 : 0) : user.claude_statusline;
   const warmup = typeof b.warmup === "boolean" ? (b.warmup ? 1 : 0) : user.warmup;
-  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify_lead = ?, notify = ?, public = ?, lang = ?, claude_statusline = ?, warmup = ? WHERE id = ?")
-    .bind(goal, tz, remindAt, lead, JSON.stringify(n), pub, lang, statusline, warmup, user.id).run();
+  // 毎日そろえる時刻: "HH:MM" (10分単位) か空 (そろえない)。変わったら、その時刻からの枠だけそろえた時刻で数える
+  const anchor = b.warmupAnchor === undefined ? user.warmup_anchor
+    : /^([01]\d|2[0-3]):[0-5]0$/.test(b.warmupAnchor) ? b.warmupAnchor : null;
+  const anchorSince = anchor && (anchor !== user.warmup_anchor || (warmup && !user.warmup)) ? Date.now() : user.warmup_anchor_since;
+  await env.DB.prepare("UPDATE users SET goal = ?, tz = ?, remind_at = ?, notify_lead = ?, notify = ?, public = ?, lang = ?, claude_statusline = ?, warmup = ?, warmup_anchor = ?, warmup_anchor_since = ? WHERE id = ?")
+    .bind(goal, tz, remindAt, lead, JSON.stringify(n), pub, lang, statusline, warmup, anchor, anchorSince ?? null, user.id).run();
   // 画面の言語も合わせる
   return json({ ok: true }, 200, lang ? { "set-cookie": langCookie(lang) } : {});
 }
@@ -594,14 +629,16 @@ async function profileData(env, u, now = Date.now()) {
   // 今の 5時間枠の使用率 (次の枠のマスに出す) は、ダッシュボードと同じく PC から届いた予定を使う
   let nextReset = {};
   try { nextReset = JSON.parse(u.next_reset || "{}"); } catch {}
-  const s = { ...computeStats(ws, { tz: u.tz, goal: u.goal, now, weekly, sessions, seed: u.id }), nextReset };
-  return { s, p: profileStats(ws, opened, s, { tz: u.tz, now }) };
+  const wsd = withDue(ws, u);
+  const s = { ...computeStats(wsd, { tz: u.tz, goal: u.goal, now, weekly, sessions, seed: u.id }), nextReset };
+  return { s, p: profileStats(wsd, opened, s, { tz: u.tz, now }) };
 }
 
 // オンボーディングで「連携できた！」の瞬間に見せる要約
 async function meSummary(env, user) {
-  const { results: ws } = await env.DB.prepare("SELECT tool, hit_at, COALESCE(ended_at, reset_at) AS reset_at, resumed_at FROM windows WHERE user_id = ? AND hit_at > ?")
+  const { results: raw } = await env.DB.prepare("SELECT tool, hit_at, COALESCE(ended_at, reset_at) AS reset_at, resumed_at FROM windows WHERE user_id = ? AND hit_at > ?")
     .bind(user.id, Date.now() - 60 * DAY).all();
+  const ws = withDue(raw, user);
   const cli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
   const delays = ws.map(delayOf).filter((d) => d != null);
   const s = await statsFor(env, user);
@@ -630,16 +667,28 @@ async function meSummary(env, user) {
 
 // ---------- cron: 毎分 ----------
 async function runCron(env, now = Date.now()) {
-  // 0) もうすぐリセット: リミット中の枠が、各自が選んだ分数 (1〜15分) 以内にリセットされる
-  const soon = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify, u.lang, u.notify_lead FROM windows w JOIN users u ON u.id = w.user_id
+  // 0〜2) もうすぐ / リセット / 出遅れ の通知。時刻は「予定の再開時刻 (due)」で判定する
+  // (ふつうはリセット時刻。自動ウォームアップで毎日そろえる設定なら、そろえた時刻。待たせている間は出遅れにしない)。
+  // due はリセットより最大で数時間後になるので、少し前にリセットされた枠まで見る。送り済みかどうかはリセット時刻で記録する
+  const { results: near } = await env.DB.prepare(
+    `SELECT w.*, u.tz, u.goal, u.notify, u.lang, u.notify_lead, u.warmup, u.warmup_anchor, u.warmup_anchor_since FROM windows w JOIN users u ON u.id = w.user_id
      WHERE w.ended_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
-  ).bind(now + MIN, now + 15 * MIN).all();
-  for (const w of soon.results) {
-    if (!parseNotify(w).soon || w.reset_at - now > (w.notify_lead ?? 5) * MIN) continue;
-    if (!(await claim(env, w.user_id, `soon:${w.tool}:${w.reset_at}`))) continue;
-    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal }, now);
-    await pushToUser(env, w.user_id, notice(w, "soon", s, now, { tool: w.tool, w }));
+  ).bind(now - 6 * HOUR, now + 15 * MIN).all();
+  for (const row of near) {
+    const u = { id: row.user_id, tz: row.tz, goal: row.goal, warmup: row.warmup, warmup_anchor: row.warmup_anchor, warmup_anchor_since: row.warmup_anchor_since };
+    const due = withDue([row], u)[0].due_at ?? row.reset_at;
+    const prefs = parseNotify(row);
+    const w = { ...row, reset_at: due }; // 文面に出す時刻は due
+    let kind = null, extra = { tool: row.tool, w };
+    if (due > now + MIN && due - now <= (row.notify_lead ?? 5) * MIN && prefs.soon) kind = "soon";
+    else if (due > now - 3 * MIN && due <= now && prefs.reset) kind = "reset";
+    else if (row.resumed_at == null && due > now - LATE_AFTER - 5 * MIN && due <= now - LATE_AFTER && prefs.late) {
+      kind = "late";
+      extra = { tool: row.tool, minutes: Math.round((now - due) / MIN) };
+    }
+    if (!kind || !(await claim(env, row.user_id, `${kind}:${row.tool}:${row.reset_at}`))) continue;
+    const st = await statsFor(env, u, now);
+    await pushToUser(env, row.user_id, notice(row, kind, st, now, extra));
   }
 
   // 0.5) リーグ: 週が終わったグループの順位を確定する
@@ -648,29 +697,6 @@ async function runCron(env, now = Date.now()) {
     try { await settleGroup(env, g.id, now); } catch (e) { console.log("league settle", g.id, e.message); }
   }
 
-  // 1) リセット通知: 直近 3分以内にリセットされた枠
-  const due = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify, u.lang FROM windows w JOIN users u ON u.id = w.user_id
-     WHERE w.ended_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
-  ).bind(now - 3 * MIN, now).all();
-  for (const w of due.results) {
-    if (!parseNotify(w).reset) continue;
-    if (!(await claim(env, w.user_id, `reset:${w.tool}:${w.reset_at}`))) continue;
-    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal }, now);
-    await pushToUser(env, w.user_id, notice(w, "reset", s, now, { tool: w.tool }));
-  }
-
-  // 2) 出遅れ通知: リセットから 10分たっても再開していない枠
-  const late = await env.DB.prepare(
-    `SELECT w.*, u.tz, u.goal, u.notify, u.lang FROM windows w JOIN users u ON u.id = w.user_id
-     WHERE w.ended_at IS NULL AND w.resumed_at IS NULL AND w.reset_at > ? AND w.reset_at <= ? AND EXISTS (SELECT 1 FROM push_subs p WHERE p.user_id = w.user_id)`,
-  ).bind(now - LATE_AFTER - 5 * MIN, now - LATE_AFTER).all();
-  for (const w of late.results) {
-    if (!parseNotify(w).late) continue;
-    if (!(await claim(env, w.user_id, `late:${w.tool}:${w.reset_at}`))) continue;
-    const s = await statsFor(env, { id: w.user_id, tz: w.tz, goal: w.goal }, now);
-    await pushToUser(env, w.user_id, notice(w, "late", s, now, { tool: w.tool, minutes: Math.round((now - w.reset_at) / MIN) }));
-  }
 
   // 3) ピンチ通知: 各自の remind_at (現地時刻) から 10分以内で、今日まだ目標未達
   const users = await env.DB.prepare(

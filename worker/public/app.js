@@ -15,9 +15,23 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       const reset = +d.dataset.reset;
       const left = reset - now;
       const clock = $(".clock", d);
+      // 毎日そろえる設定: リセットの瞬間に GO ではなく、予定の時刻までの待機に切り替える
+      if (left <= 0 && +d.dataset.due > now) {
+        d.classList.remove("limited", "race", "behind");
+        d.classList.add("scheduled");
+        d.dataset.reset = d.dataset.due;
+        delete d.dataset.due;
+        delete d.dataset.start;
+        delete d.dataset.pct;
+        $(".ring-text", d).innerHTML = `<small>${T("c.scheduled")}</small><b class="clock"></b>`;
+        const box = $(".pace", d);
+        const at = new Intl.DateTimeFormat("en-GB", { timeZone: d.dataset.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(+d.dataset.reset));
+        if (box) { box.className = "pace neutral"; box.removeAttribute("data-pace"); box.innerHTML = `<b>⏰</b><span>${T("c.scheduledAt", { t: at })}</span>`; }
+        continue;
+      }
       if (left <= 0) {
         // リセットの瞬間: GO に切り替える
-        d.classList.remove("limited", "weekly", "using", "race", "behind");
+        d.classList.remove("limited", "weekly", "using", "scheduled", "race", "behind");
         delete d.dataset.start;
         d.classList.add("ready");
         delete d.dataset.reset;
@@ -45,7 +59,7 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
             $("span", box).textContent = ok ? T("c.paceMaxAt", { t: hm(at) }) : T("c.paceShortAt", { p: 100 - Math.min(100, Math.round((pct * WINDOW_MS) / Math.max(1, now - start))) });
           }
         }
-      } else if (d.classList.contains("limited") || d.classList.contains("using")) {
+      } else if (d.classList.contains("limited") || d.classList.contains("using") || d.classList.contains("scheduled")) {
         const fill = $(".fill", d);
         fill.style.strokeDashoffset = (+fill.dataset.c * (1 - Math.min(1, left / WINDOW_MS))).toFixed(1);
       }
@@ -110,11 +124,29 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
       const res = await fetch("/api/settings", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ goal: f.get("goal"), remindAt: f.get("remindAt"), tz: f.get("tz"), lang: f.get("lang"), notifyLead: f.get("notifyLead"), notify, public: $("input[name=public]", form).checked, statusline: $("input[name=statusline]", form).checked,
-          warmup: $("input[name=warmup]", form).checked }),
+          warmup: $("input[name=warmup]", form).checked,
+          warmupAnchor: f.get("anchorH") === "" || f.get("anchorH") == null ? "" : `${String(f.get("anchorH")).padStart(2, "0")}:${String(f.get("anchorM") || 0).padStart(2, "0")}` }),
       });
       status.textContent = res.ok ? T("c.saved") : T("c.saveFailed");
       if (res.ok) setTimeout(() => location.reload(), 600);
     });
+  }
+
+  // 自動ウォームアップの「毎日そろえる時刻」: 選んだ時刻から 1日の予定をその場で見せる。オフの間は選べない
+  const align = $("[data-wu-align]");
+  if (align) {
+    const on = $("input[name=warmup]"), hSel = $("select[name=anchorH]", align), mSel = $("select[name=anchorM]", align), out = $("[data-anchor-preview]", align);
+    const hm = (min) => `${Math.floor((min % 1440) / 60)}:${String(min % 60).padStart(2, "0")}`;
+    const render = () => {
+      for (const el of [hSel, mSel]) el.disabled = !on.checked;
+      mSel.disabled ||= hSel.value === "";
+      if (hSel.value === "") { out.textContent = T("c.alignOff"); return; }
+      const a = +hSel.value * 60 + +mSel.value;
+      const slots = [0, 1, 2, 3].map((k) => hm(a + k * 300));
+      out.textContent = T("c.alignPreview", { slots: slots.join("・"), from: hm(a + 1200), to: hm(a) });
+    };
+    for (const el of [on, hSel, mSel]) el.addEventListener("change", render);
+    render();
   }
 
   // ---------- push ----------

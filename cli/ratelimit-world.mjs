@@ -17,7 +17,7 @@ import { spawn, spawnSync, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -512,7 +512,7 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
     }
     if (r.status) writeJson(STATUS_FILE, { ...r.status, at: Date.now() });
     // 自動ウォームアップ: 次のリセット時刻に合わせて予約し直す (オフなら外す)
-    if (r.warmup) { try { scheduleWarmups(r.warmup, payload.nextReset); } catch (e) { log(`warmup: ${e.message}`); } }
+    if (r.warmup) { try { scheduleWarmups(r.warmup); } catch (e) { log(`warmup: ${e.message}`); } }
     // ダッシュボードの「Claude Code の使用率も表示する」に合わせて、ステータスラインの中継を入れる / 外す
     if (typeof r.statusline === "boolean" && r.statusline !== !!loadConfig().statusline) {
       try { setStatusline(r.statusline); log(`statusline relay ${r.statusline ? "on" : "off"}`); } catch (e) { log(`statusline: ${e.message}`); }
@@ -611,25 +611,26 @@ function removeWarmup(tool) {
   fs.rmSync(warmupPlist(tool), { force: true });
 }
 
-function scheduleWarmups(setting, nextReset) {
+// setting.at[tool] = { at: 送る時刻, since: 今の枠が終わる時刻 } はサーバーが決める (毎日そろえる設定もサーバー側で当てる)
+function scheduleWarmups(setting) {
   if (process.platform !== "darwin") return;
   const cfg = loadConfig();
   const planned = { ...(cfg.warmupPlanned || {}) };
   for (const tool of WARMUP_TOOLS) {
-    if (!setting?.on) { if (planned[tool] || fs.existsSync(warmupPlist(tool))) removeWarmup(tool); delete planned[tool]; continue; }
-    const resetAt = nextReset?.[tool]?.resetAt;
+    const plan = setting?.on ? setting.at?.[tool] : null;
+    if (!plan) { if (planned[tool] || fs.existsSync(warmupPlist(tool))) removeWarmup(tool); delete planned[tool]; continue; }
     const bin = findBin(tool);
-    if (!bin || !(resetAt > Date.now())) continue;
-    if (planned[tool] === resetAt && fs.existsSync(warmupPlist(tool))) continue;
-    // リセットの次の分に起こす (launchd は分単位)
-    const at = new Date(Math.ceil((resetAt + 5000) / 60000) * 60000);
+    if (!bin || !(plan.at > 0)) continue;
+    if (planned[tool]?.at === plan.at && fs.existsSync(warmupPlist(tool))) continue;
+    // launchd は分単位: 予定の時刻を含む分 (秒があれば次の分)。もう過ぎていれば次の分
+    const at = new Date(Math.max(Math.ceil(plan.at / 60000), Math.ceil((Date.now() + 1000) / 60000)) * 60000);
     const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
     const PATH = [path.dirname(process.execPath), path.dirname(bin), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
     const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${warmupLabel(tool)}</string>
-  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(INSTALLED_SCRIPT)}</string><string>warmup</string><string>${tool}</string><string>${resetAt}</string></array>
+  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(INSTALLED_SCRIPT)}</string><string>warmup</string><string>${tool}</string><string>${plan.at}</string><string>${plan.since}</string></array>
   <key>StartCalendarInterval</key><dict><key>Month</key><integer>${at.getMonth() + 1}</integer><key>Day</key><integer>${at.getDate()}</integer><key>Hour</key><integer>${at.getHours()}</integer><key>Minute</key><integer>${at.getMinutes()}</integer></dict>
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(PATH)}</string></dict>
   <key>StandardInPath</key><string>/dev/null</string>
@@ -639,14 +640,14 @@ function scheduleWarmups(setting, nextReset) {
     fs.mkdirSync(path.dirname(warmupPlist(tool)), { recursive: true });
     fs.writeFileSync(warmupPlist(tool), plist);
     try { execFileSync("launchctl", ["bootstrap", `gui/${process.getuid()}`, warmupPlist(tool)], { stdio: "ignore" }); } catch (e) { log(`warmup schedule ${tool}: ${e.message}`); continue; }
-    planned[tool] = resetAt;
+    planned[tool] = { at: plan.at, since: plan.since, bookedFor: at.getTime() };
     log(`warmup ${tool} scheduled at ${at.toISOString()}`);
   }
   saveConfig({ ...loadConfig(), warmupPlanned: planned, warmup: setting ?? null });
 }
 
 // 予約の時刻に launchd から呼ばれる: 条件を確かめて 1回だけ送り、結果をすぐサーバーへ送る
-async function warmup(tool, resetAt) {
+async function warmup(tool, at, since) {
   const cfg = loadConfig();
   const finish = (msg) => {
     log(`warmup ${tool}: ${msg}`);
@@ -654,12 +655,13 @@ async function warmup(tool, resetAt) {
     fs.rmSync(warmupPlist(tool), { force: true });
     try { spawn("launchctl", ["bootout", `gui/${process.getuid()}/${warmupLabel(tool)}`], { detached: true, stdio: "ignore" }).unref(); } catch {}
   };
-  if (!WARMUP_TOOLS.includes(tool) || !(resetAt > 0)) return finish("bad arguments");
+  if (!WARMUP_TOOLS.includes(tool) || !(at > 0)) return finish("bad arguments");
+  since = since > 0 ? since : at;
   if (!cfg.warmup?.on) return finish("off");
-  if (Date.now() < resetAt) return finish("too early");
-  // リセット後にもう使い始めていれば送らない (その時点で新しい枠は始まっている)
-  const scan = tool === "claude" ? scanClaude(resetAt) : scanCodex(resetAt);
-  if (scan.activity.some((t) => t >= resetAt) || scan.usage.some((u) => u.ts >= resetAt)) return finish("already in use");
+  if (Date.now() < at - 30000) return finish("too early");
+  // 今の枠が終わったあとに、もう使い始めていれば送らない (その時点で新しい枠は始まっている)
+  const scan = tool === "claude" ? scanClaude(since) : scanCodex(since);
+  if (scan.activity.some((t) => t >= since) || scan.usage.some((u) => u.ts >= since)) return finish("already in use");
   const bin = findBin(tool);
   if (!bin) return finish("not installed");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rw-warmup-"));
@@ -809,7 +811,7 @@ function liveTools(liveClaude) {
     tools.claude = { state: "using", resetAt: cr, pct: Number(five.used_percentage), exact: true };
   }
   for (const [k, t] of Object.entries(tools)) {
-    if ((t.state === "limited" || t.state === "using" || t.state === "weekly") && t.resetAt <= now) tools[k] = { state: "ready", since: t.resetAt };
+    if ((t.state === "limited" || t.state === "using" || t.state === "weekly" || t.state === "scheduled") && t.resetAt <= now) tools[k] = { state: "ready", since: t.resetAt };
   }
   return { ...st, tools, now };
 }
@@ -823,6 +825,7 @@ function statusSegment(liveClaude) {
     if (!t || t.state === "idle") continue;
     if (t.state === "ready") parts.push(`${NAMES[tool]} ⚡GO`);
     else if (t.state === "weekly") parts.push(`${NAMES[tool]} 🏆${dur(t.resetAt - st.now)}`);
+    else if (t.state === "scheduled") parts.push(`${NAMES[tool]} ⏰${hm(t.resetAt)}`);
     else parts.push(`${NAMES[tool]}${t.pct != null ? ` ${L("残", "")}${100 - Math.round(t.pct)}%` : ""} ⏳${t.exact === false ? "~" : ""}${dur(t.resetAt - st.now)}`);
   }
   return parts.join(" · ");
@@ -846,6 +849,7 @@ function menubar() {
     const pct = t.pct != null ? ` ${L(`残り ${100 - Math.round(t.pct)}%`, `${100 - Math.round(t.pct)}% left`)}` : "";
     if (t.state === "ready") lines.push(L(`${name}  ⚡ リセット済み — 今すぐ再開`, `${name}  ⚡ reset — restart now`) + " | color=#16A34A");
     else if (t.state === "weekly") lines.push(L(`${name}  🏆 週間リミット中（${new Date(t.resetAt).toLocaleString()} まで）`, `${name}  🏆 weekly limit (until ${new Date(t.resetAt).toLocaleString()})`));
+    else if (t.state === "scheduled") lines.push(L(`${name}  ⏰ ${hm(t.resetAt)} に自動で開始（あと ${dur(t.resetAt - st.now)}）`, `${name}  ⏰ auto-start at ${hm(t.resetAt)} (in ${dur(t.resetAt - st.now)})`));
     else if (t.state === "idle") lines.push(L(`${name}  待機中`, `${name}  idle`));
     else lines.push(L(`${name}${pct}  ${hm(t.resetAt)} にリセット（あと ${dur(t.resetAt - st.now)}${t.exact === false ? "・推定" : ""}）`, `${name}${pct}  resets ${hm(t.resetAt)} (in ${dur(t.resetAt - st.now)}${t.exact === false ? ", est." : ""})`));
   }
@@ -1017,6 +1021,13 @@ function status() {
     console.log(L(`  ${w.tool.padEnd(6)} 到達 ${fmt(w.hitAt)} → リセット ${fmt(w.resetAt)} (${late})`, `  ${w.tool.padEnd(6)} hit ${fmt(w.hitAt)} → reset ${fmt(w.resetAt)} (${late})`));
   }
   if (p.weeklyHits.length) console.log(`\n🏆 ${L("週間リミット到達", "Weekly limits hit")}: ${p.weeklyHits.map((w) => `${w.tool} ${fmt(w.hitAt)}`).join(", ")}`);
+  // 自動ウォームアップの予約
+  const wu = cfg.warmup;
+  console.log(`\n⚡ ${L("自動ウォームアップ", "Auto warm-up")}: ${wu?.on ? L(`オン${wu.anchor ? `（毎日 ${wu.anchor} にそろえる）` : ""}`, `on${wu.anchor ? ` (same times every day from ${wu.anchor})` : ""}`) : L("オフ", "off")}`);
+  for (const tool of WARMUP_TOOLS) {
+    const b = cfg.warmupPlanned?.[tool];
+    if (wu?.on && b && fs.existsSync(warmupPlist(tool))) console.log(L(`  ${tool.padEnd(6)} ${fmt(b.bookedFor ?? b.at)} に送る予定`, `  ${tool.padEnd(6)} will send at ${fmt(b.bookedFor ?? b.at)}`));
+  }
 }
 
 // ---------- main ----------
@@ -1035,7 +1046,7 @@ if (isMain) {
     else if (cmd === "menubar") (argv[1] === "install" ? menubarInstall() : menubar());
     else if (cmd === "scan") console.log(JSON.stringify(collect(Number(flag("--days")) || 7), null, 2));
     else if (cmd === "status") status();
-    else if (cmd === "warmup") await warmup(argv[1], Number(argv[2]));
+    else if (cmd === "warmup") await warmup(argv[1], Number(argv[2]), Number(argv[3]));
     else if (cmd === "uninstall") uninstall();
     else console.log(L(
       `ratelimit-world ${VERSION}\n\n  setup [--server URL]  ログインして hooks を登録\n  sync [--full]         今すぐ送信\n  status                直近の到達と送信状況\n  menubar install       Mac のメニューバー (SwiftBar) に表示\n  scan [--days N]       送る内容を表示 (通信なし)\n  uninstall             hooks を外して削除`,
