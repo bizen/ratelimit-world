@@ -17,7 +17,7 @@ import { spawn, spawnSync, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -350,13 +350,16 @@ function readAgUsage() {
 
 // 1回分の残量を、これまでの記録に足す (サーバーに送る形に組み立てるのは scanAntigravity)
 export function updateAntigravity(state, groups, now = Date.now()) {
-  const st = { groups: {}, hits: [], weekly: [], opened: [], ...state };
+  const st = { groups: {}, weeks: {}, hits: [], weekly: [], opened: [], ...state };
   st.groups = { ...st.groups };
+  // 週間枠はグループごとに今の残りを覚えておく (Gemini 4 Argon のように 5時間枠がなく週間枠だけのグループもある)
+  st.weeks = {};
   const near = (a, b, ms) => Math.abs(a - b) < ms;
   for (const g of groups || []) {
     const bucket = (w) => g.buckets?.find((b) => b.window === w);
     const five = bucket("5h"), week = bucket("weekly");
     const at = (b) => (b ? Date.parse(b.reset_time) : NaN);
+    if (week && Number.isFinite(at(week))) st.weeks[g.name] = { frac: Number(week.remaining_fraction), resetAt: at(week) };
     if (week && Number.isFinite(at(week)) && week.remaining_fraction <= 0.001 && !st.weekly.some((h) => near(h.reset, at(week), 6 * HOUR))) {
       st.weekly.push({ ts: now, reset: at(week), group: g.name });
     }
@@ -382,6 +385,16 @@ export function updateAntigravity(state, groups, now = Date.now()) {
   return st;
 }
 
+// サーバーに送る Antigravity の今の状態: 5時間枠 (動いていれば) と週間枠。どちらもなくても、使っていれば present
+function antigravityNext(ag) {
+  if (!ag.present && !ag.current) return {};
+  const now = Date.now();
+  const r = { present: true };
+  if (ag.current?.resetAt > now) Object.assign(r, { resetAt: ag.current.resetAt, exact: true, pct: ag.current.pct, at: ag.current.at });
+  if (ag.week?.resetAt > now) r.week = ag.week;
+  return { antigravity: r };
+}
+
 export function scanAntigravity(sinceMs) {
   let st = readJson(AG_FILE, null);
   const now = Date.now();
@@ -389,7 +402,7 @@ export function scanAntigravity(sinceMs) {
     const groups = readAgUsage();
     if (groups) { st = updateAntigravity(st || {}, groups, now); writeJson(AG_FILE, st); }
   }
-  if (!st) return { hits: [], weekly: [], activity: [], usage: [], opened: [], current: null };
+  if (!st) return { hits: [], weekly: [], activity: [], usage: [], opened: [], current: null, week: null, present: false };
   const opened = st.opened.filter((o) => o.resetAt >= sinceMs);
   // 今の枠: 始まっているグループのうち、残りがいちばん少ないもの
   let current = null;
@@ -398,7 +411,17 @@ export function scanAntigravity(sinceMs) {
     const pct = Math.round((1 - g.frac) * 100);
     if (!current || pct > current.pct) current = { resetAt: g.resetAt, pct, at: st.polledAt };
   }
+  // 週間枠: 残りがいちばん少ないグループ (使っていなくても、Argon のように減っていればそれが出る)
+  let week = null;
+  for (const [name, w] of Object.entries(st.weeks || {})) {
+    if (!(w.resetAt > now)) continue;
+    const pct = Math.round((1 - w.frac) * 100);
+    if (!week || pct > week.pct) week = { pct, resetAt: w.resetAt, label: name.replace(/ Models$/, "") };
+  }
   return {
+    // agy が入っていて、最近の残量が取れている (使っていればいつもダイヤルを出す)
+    present: !!findBin("agy") && st.polledAt > now - DAY,
+    week,
     hits: st.hits.filter((h) => h.reset >= sinceMs),
     weekly: st.weekly.filter((h) => h.reset >= sinceMs),
     // 枠が始まった時刻 (= リセット後に使い始めた時刻) は、リセット時刻の 5時間前で正確に分かる
@@ -537,7 +560,7 @@ export function collect(days) {
     windows,
     weeklyHits,
     plans: { claude: claudePlan(), codex: codex.current?.plan ?? null },
-    nextReset: { ...nextResets(claude, codex), ...(ag.current?.resetAt > Date.now() ? { antigravity: { resetAt: ag.current.resetAt, exact: true, pct: ag.current.pct, at: ag.current.at } } : {}) },
+    nextReset: { ...nextResets(claude, codex), ...antigravityNext(ag) },
     sessions: [...openedSessions(claude, codex, since), ...ag.opened.map((o) => ({ tool: "antigravity", startAt: o.resetAt - WINDOW_MS, resetAt: o.resetAt, peakPct: o.peak, exact: true }))],
     output: outputByDay(claude, codex, since),
   };

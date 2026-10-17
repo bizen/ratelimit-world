@@ -421,13 +421,17 @@ async function handleSync(req, env) {
     if (r && isTime(r.resetAt) && r.resetAt > now && r.resetAt - now <= WINDOW_MS + 15 * MIN) {
       nextReset[tool] = { resetAt: r.resetAt, exact: !!r.exact, pct: pct(r.pct), at: isTime(r.at) ? r.at : null };
     }
-    // 週間枠の使用率 (Codex のみ。ログに正確な値が書かれる)
+    // 週間枠の使用率 (Codex と Antigravity。Antigravity は Gemini 4 Argon のように週間枠だけのグループもあるので名前も)
     if (r?.week && isTime(r.week.resetAt) && r.week.resetAt > now && pct(r.week.pct) != null) {
-      (nextReset[tool] ??= {}).week = { pct: pct(r.week.pct), resetAt: r.week.resetAt };
+      const label = typeof r.week.label === "string" ? r.week.label.slice(0, 40) : null;
+      (nextReset[tool] ??= {}).week = { pct: pct(r.week.pct), resetAt: r.week.resetAt, ...(label ? { label } : {}) };
     }
+    // 使っている印 (5時間枠が動いていなくてもダイヤルを出すため。Antigravity)
+    if (r?.present) (nextReset[tool] ??= {}).present = now;
     if (nextReset[tool] && !(nextReset[tool].resetAt > now)) { delete nextReset[tool].resetAt; delete nextReset[tool].pct; }
     if (nextReset[tool]?.week && !(nextReset[tool].week.resetAt > now)) delete nextReset[tool].week;
-    if (nextReset[tool] && !Object.keys(nextReset[tool]).some((k) => k === "resetAt" || k === "week")) delete nextReset[tool];
+    if (nextReset[tool]?.present && !(nextReset[tool].present > now - 3 * DAY)) delete nextReset[tool].present;
+    if (nextReset[tool] && !Object.keys(nextReset[tool]).some((k) => k === "resetAt" || k === "week" || k === "present")) delete nextReset[tool];
     // リセットチケットなどで枠が予定より早く終わった: 新しい枠が始まったのは前の枠の予定リセットより前
     const cur = nextReset[tool];
     if (cur?.exact && cur.resetAt > now) {

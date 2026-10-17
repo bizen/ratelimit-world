@@ -585,7 +585,8 @@ function dialFoot(ctx, tool, s, now, limitedAt) {
   const active = r?.resetAt > now;
   const est = active && !r.exact ? `<small>${t("dial.estimated")}</small>` : "";
   const w = s.nextReset?.[tool]?.week;
-  const week = w?.resetAt > now ? `${100 - Math.round(w.pct)}%<small>${t("dial.weekReset", shortDay(lang, w.resetAt, s.tz))}</small>` : dash;
+  // 週間枠の残り。Antigravity は Gemini 4 Argon のようにグループ名も出す
+  const week = w?.resetAt > now ? `${100 - Math.round(w.pct)}%<small>${w.label ? `${esc(w.label)} · ` : ""}${t("dial.weekReset", shortDay(lang, w.resetAt, s.tz))}</small>` : dash;
   const last = s.lastHitByTool[tool];
   const lastText = last
     ? `${ago(ctx, now - last)}<small>${last < now - 20 * 3600 * 1000 ? shortWhen(lang, last, s.tz) : localTime(last, s.tz)}</small>`
@@ -651,6 +652,10 @@ function dial(ctx, tool, s, now) {
     state = "idle";
     box = { title: t("dial.idle"), detail: t("box.idle") };
   }
+  // Antigravity で 5時間枠が動いていないときは、週間枠の残りを主役にする (Gemini 4 Argon は週間枠だけ)
+  const wk = s.nextReset?.[tool]?.week;
+  const weekOnly = state === "idle" && tool === "antigravity" && wk?.resetAt > now;
+  if (weekOnly) box = { title: t("box.weekOnly"), detail: t("box.weekOnlyAt", wk.label || "", shortDay(lang, wk.resetAt, s.tz)) };
   const start = resetAt && state !== "weekly" ? resetAt - WINDOW_MS : null;
   const R = 52, C = 2 * Math.PI * R;
   const off = (f) => (C * (1 - Math.min(1, Math.max(0, f)))).toFixed(1);
@@ -668,6 +673,7 @@ function dial(ctx, tool, s, now) {
       : { kind: "short", title: t("c.paceBad"), detail: t("c.paceShortAt", { p: 100 - Math.min(100, r.pctAtReset) }) };
   } else if (resetAt) frac = Math.min(1, Math.max(0, (resetAt - now) / WINDOW_MS));
   if (state === "weekly") frac = 1;
+  if (weekOnly) frac = 1 - wk.pct / 100;
   return `
 <article class="dial tool-${tool} ${state} ${raceOn ? (ahead ? "race ahead" : "race behind") : ""}" data-tool="${tool}" data-tz="${esc(s.tz)}"
   ${resetAt ? `data-reset="${resetAt}"` : ""} ${start ? `data-start="${start}"` : ""} ${usedPct != null ? `data-pct="${usedPct}"` : ""} ${state === "ready" ? `data-since="${dueOf(last)}"` : ""} ${dueLater ? `data-due="${dueLater}"` : ""}>
@@ -680,6 +686,7 @@ function dial(ctx, tool, s, now) {
     <div class="ring-text">
       ${raceOn
         ? `<small class="remain">${t("dial.remain")}</small><b class="pct">${100 - Math.round(usedPct)}%</b><small class="left">${t("dial.left")} <span class="clock"></span></small>`
+        : weekOnly ? `<small class="remain">${t("dial.weekLeft")}</small><b class="pct">${100 - Math.round(wk.pct)}%</b><small class="left">${esc(wk.label || "")}</small>`
         : `<small>${t(`dial.${state}`)}</small><b class="clock">${state === "ready" ? "GO" : state === "idle" ? "—" : ""}</b>`}
     </div>
   </div>
