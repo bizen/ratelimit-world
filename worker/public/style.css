@@ -924,3 +924,20 @@ body.pwa { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 /* 階段のウィンドウ: 中身の高さに頼らず、画面に合わせた高さを決める (短く潰れないように) */
 .stairs-dialog { height: min(820px, calc(100dvh - 32px)); }
 .stairs-dialog .stairs-scroll { min-height: 0; }
+/* 収納はダイヤルの下に、横長で細く (リングは横に並ぶ) */
+.dial-area.has-dock, .dial-area.has-dock { display: grid; grid-template-columns: 1fr; gap: 10px; align-items: start; }
+@media (min-width: 721px) { .dial-area.has-dock { grid-template-columns: 1fr; } }
+.dial-area.has-dock .dock { align-self: auto; display: flex; align-items: center; gap: 12px; padding: 6px 12px; border-radius: 16px; overflow-x: auto; }
+.dock-h { margin: 0; flex: none; font-size: 11px; }
+.dock ul { display: flex; gap: 14px; justify-items: initial; }
+.dock-item { grid-auto-flow: column; align-items: center; gap: 6px; }
+.dock .mini-ring, .dock .mini-ring { width: 32px; height: 32px; }
+.dock .mini-ring .tool-icon, .dock .mini-ring .tool-icon svg { width: 14px; height: 14px; }
+.dock .mini-text { font-size: 12px; }
+/* 収納があってもダイヤルは元の幅 (見出しを短くしない) */
+@media (max-width: 720px) {
+  .dial-area.has-dock .dial { padding-left: 12px; padding-right: 12px; }
+  .dial-area.has-dock .dials.n2 .tn-long { display: inline; }
+  .dial-area.has-dock .dials.n2 .tn-short { display: none; }
+  .dial-area.has-dock .dials.n2 .dial h3 { font-size: 15px; padding: 0 20px; }
+}
