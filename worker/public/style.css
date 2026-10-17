@@ -879,3 +879,11 @@ body.pwa { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 /* 収納はダイヤルと同じ縦の長さ (リングは上から並ぶ) */
 .dial-area.has-dock { align-items: stretch; }
 .dial-area.has-dock .dock { position: static; align-self: stretch; }
+/* 収納は細く */
+.dial-area.has-dock { grid-template-columns: minmax(0, 1fr) 50px; gap: 8px; }
+.dock { padding: 8px 0 10px; border-radius: 18px; }
+.dock-h { font-size: 10px; margin-bottom: 6px; }
+.mini-ring { width: 38px; height: 38px; }
+.mini-ring .tool-icon, .mini-ring .tool-icon svg { width: 16px; height: 16px; }
+.mini-text { font-size: 10px; }
+@media (min-width: 721px) { .dial-area.has-dock { grid-template-columns: minmax(0, 1fr) 60px; } .mini-ring { width: 44px; height: 44px; } }
