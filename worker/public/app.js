@@ -90,6 +90,18 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
   }
   if ($(".dial")) { tick(); setInterval(tick, 1000); }
 
+  // ダイヤルの出し入れ: 収納のリングを押すと大きなダイヤルが開く。「収納にしまう」「メインに出す」で入れ替える
+  for (const b of $$("[data-dock-open]")) b.addEventListener("click", () => $(`[data-dock-dialog="${b.dataset.dockOpen}"]`)?.showModal());
+  for (const d of $$("[data-dock-dialog]")) {
+    $("[data-dock-close]", d)?.addEventListener("click", () => d.close());
+    d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
+  }
+  for (const b of $$("[data-move]")) b.addEventListener("click", async () => {
+    b.disabled = true;
+    const res = await fetch("/api/dock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tool: b.dataset.move, to: b.dataset.to }) });
+    if (res.ok) location.reload(); else b.disabled = false;
+  });
+
   // リーグのタブ (Claude と ChatGPT の両方に参加しているとき)
   for (const tab of $$("[data-lg-tab]")) tab.addEventListener("click", () => {
     for (const x of $$("[data-lg-tab]")) { x.classList.toggle("on", x === tab); x.setAttribute("aria-selected", x === tab ? "true" : "false"); }

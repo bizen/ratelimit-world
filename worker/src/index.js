@@ -868,6 +868,16 @@ async function route(req, env) {
       return json({ ok: true });
     }
     if (p === "/api/settings" && m === "POST") return saveSettings(req, env, user);
+    // ダイヤルの出し入れ: メインに置くツールの一覧を更新する (収納はそれ以外)
+    if (p === "/api/dock" && m === "POST") {
+      const b = await req.json().catch(() => ({}));
+      if (!TOOLS.has(b.tool) || !["main", "dock"].includes(b.to)) return json({ error: "bad request" }, 400);
+      let main = ["claude", "codex"];
+      try { const v = JSON.parse(user.main_tools || "null"); if (Array.isArray(v)) main = v.filter((x) => TOOLS.has(x)); } catch {}
+      main = b.to === "main" ? [...new Set([...main, b.tool])] : main.filter((x) => x !== b.tool);
+      await env.DB.prepare("UPDATE users SET main_tools = ? WHERE id = ?").bind(JSON.stringify(main), user.id).run();
+      return json({ ok: true, main });
+    }
     if (p === "/api/push/subscribe" && m === "POST") return subscribe(req, env, user);
     if (p === "/api/push/unsubscribe" && m === "POST") {
       const b = await req.json().catch(() => ({}));

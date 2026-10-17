@@ -5,6 +5,49 @@ import { TOOL_NAME, addDays, localTime, comboXp, moodOf, dueOf, WINDOW_MS, WRITT
 // 小さな枠に出す短い名前
 const SHORT_NAME = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
 
+// メイン (大きなダイヤル) と収納 (右の縦長の棚に小さなリング) の振り分け。
+// 何もしなければ Claude Code と Codex がメインで、それ以外 (Antigravity やこれから足すエージェント) は収納。
+// 利用者が出し入れした結果は users.main_tools (メインに置くツールの一覧) に残る。メインは最低 1つ
+const DEFAULT_MAIN = ["claude", "codex"];
+function placeTools(s, user) {
+  const all = toolsOf(s);
+  let wanted = DEFAULT_MAIN;
+  try { const v = JSON.parse(user?.main_tools || "null"); if (Array.isArray(v)) wanted = v; } catch {}
+  let main = all.filter((tool) => wanted.includes(tool));
+  if (!main.length) main = [all[0]];
+  return { main, dock: all.filter((tool) => !main.includes(tool)) };
+}
+
+// 収納の小さなリング: 大きなダイヤルと同じ状態から、残量 (か GO / ⏰ / 🏆) だけを出す
+function miniRing(ctx, tool, s, now) {
+  const { t } = ctx;
+  const m = dialModel(ctx, tool, s, now);
+  const text = m.state === "weekly" ? "🏆" : m.state === "ready" ? "GO" : m.state === "scheduled" ? localTime(m.resetAt, s.tz)
+    : m.raceOn ? `${100 - Math.round(m.usedPct)}%` : m.weekOnly ? `${100 - Math.round(m.wk.pct)}%` : m.resetAt ? localTime(m.resetAt, s.tz) : "—";
+  const R = 20, C = 2 * Math.PI * R;
+  const frac = m.state === "ready" ? 1 : m.frac;
+  return `<li><button type="button" class="dock-item tool-${tool} ${m.state}" data-dock-open="${tool}" aria-label="${esc(`${TOOL_NAME[tool]}: ${text}. ${t("dock.open")}`)}">
+      <span class="mini-ring"><svg viewBox="0 0 48 48" aria-hidden="true"><circle class="track" cx="24" cy="24" r="${R}"/><circle class="fill" cx="24" cy="24" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - Math.min(1, Math.max(0, frac)))).toFixed(1)}"/></svg>${TOOL_ICON[tool]}</span>
+      <span class="mini-text">${esc(text)}</span>
+    </button></li>`;
+}
+
+// ダイヤルの並び: 左にメインの大きなダイヤル、右に収納 (あれば)。収納のリングを押すと、そのツールの大きなダイヤルが開く
+function dialArea(ctx, s, now) {
+  const { t, user } = ctx;
+  const { main, dock } = placeTools(s, user);
+  const dials = main.map((tool) => dial(ctx, tool, s, now, { move: main.length > 1 ? "dock" : null })).join("");
+  if (!dock.length) return `<section class="dial-area"><div class="dials n${main.length}">${dials}</div></section>`;
+  return `<section class="dial-area has-dock">
+  <div class="dials n${main.length}">${dials}</div>
+  <aside class="dock" aria-label="${esc(t("dock.h"))}"><p class="dock-h">${t("dock.h")}</p><ul>${dock.map((tool) => miniRing(ctx, tool, s, now)).join("")}</ul></aside>
+  ${dock.map((tool) => `<dialog class="dock-dialog" data-dock-dialog="${tool}" aria-label="${esc(TOOL_NAME[tool])}">
+    <button type="button" class="dock-close" data-dock-close aria-label="${esc(t("wr.close"))}">×</button>
+    ${dial(ctx, tool, s, now, { move: "main" })}
+  </dialog>`).join("")}
+</section>`;
+}
+
 // 画面に出すツール: Claude Code と Codex はいつも。Antigravity は使っている人だけ
 function toolsOf(s) {
   const ag = s.nextReset?.antigravity || s.tools?.antigravity || s.lastReset?.antigravity || s.lastHitByTool?.antigravity || (s.todayOpened ?? []).some((o) => o.tool === "antigravity");
@@ -518,7 +561,7 @@ function todayTrack(ctx, s, now) {
 // 次に使い切る枠: どちらのツールで達成するかはまだ分からないので、上下 2段に分けて
 // それぞれの今の残量 (リセット直後が 100%、使い切ると 0%) を出す。使い切りやすい方 (残量が少ない方) を上、リミット中で使えない方は下
 function nextSlot(ctx, s, now, i, goalMark, nextLabel) {
-  const halves = toolsOf(s).map((tool) => {
+  const halves = placeTools(s, ctx.user).main.map((tool) => {
     const lim = s.tools[tool]?.state === "limited" && s.tools[tool].resetAt > now ? s.tools[tool].resetAt : null;
     const cur = s.nextReset?.[tool];
     const pct = lim ? null : cur?.resetAt > now ? cur.pct ?? null : 0;
@@ -615,7 +658,8 @@ export function race(pct, start, now) {
 // 「リセット待ち」の稲妻。絵文字の ⚡ は黄色で、Codex の白い箱では見えにくいので、文字と同じ色で描く
 const BOLT = `<svg class="bolt" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 1 3 9h4l-1 6 6.5-8h-4z" fill="currentColor"/></svg>`;
 
-function dial(ctx, tool, s, now) {
+// ダイヤルの状態 (大きなダイヤルと、収納の小さなリングで同じものを使う)
+function dialModel(ctx, tool, s, now) {
   const { t, lang } = ctx;
   const x = s.tools[tool];
   const last = s.lastReset[tool];
@@ -674,10 +718,20 @@ function dial(ctx, tool, s, now) {
   } else if (resetAt) frac = Math.min(1, Math.max(0, (resetAt - now) / WINDOW_MS));
   if (state === "weekly") frac = 1;
   if (weekOnly) frac = 1 - wk.pct / 100;
+  return { state, resetAt, usedPct, box, dueLater, wk, weekOnly, start, raceOn, frac, elapsed, ahead, last, R, C, off };
+}
+
+// opts.move: "dock" ならヘッダーに「収納」ボタン、"main" なら下に「メインに出す」ボタン
+function dial(ctx, tool, s, now, opts = {}) {
+  const { t } = ctx;
+  const { state, resetAt, usedPct, box, dueLater, wk, weekOnly, start, raceOn, frac, elapsed, ahead, last, R, C, off } = dialModel(ctx, tool, s, now);
+  const moveBtn = opts.move === "dock"
+    ? `<button type="button" class="dial-move" data-move="${tool}" data-to="dock" title="${esc(t("dock.put"))}" aria-label="${esc(t("dock.put"))}"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`
+    : "";
   return `
 <article class="dial tool-${tool} ${state} ${raceOn ? (ahead ? "race ahead" : "race behind") : ""}" data-tool="${tool}" data-tz="${esc(s.tz)}"
   ${resetAt ? `data-reset="${resetAt}"` : ""} ${start ? `data-start="${start}"` : ""} ${usedPct != null ? `data-pct="${usedPct}"` : ""} ${state === "ready" ? `data-since="${dueOf(last)}"` : ""} ${dueLater ? `data-due="${dueLater}"` : ""}>
-  <h3>${TOOL_ICON[tool]}${TOOL_NAME[tool]}</h3>
+  <h3>${TOOL_ICON[tool]}<span class="tn-long">${TOOL_NAME[tool]}</span><span class="tn-short">${SHORT_NAME[tool]}</span>${moveBtn}</h3>
   <div class="ring" ${raceOn ? `role="img" aria-label="${esc(t("dial.raceAria", 100 - Math.round(usedPct), Math.round(elapsed * 100)))}"` : ""}>
     <svg viewBox="0 0 120 120" aria-hidden="true">
       <circle class="track" cx="60" cy="60" r="${R}"/>
@@ -692,6 +746,7 @@ function dial(ctx, tool, s, now) {
   </div>
   <div class="pace ${box.kind ?? "neutral"}" ${box.kind ? "data-pace" : ""}><b>${box.icon ?? ""}${esc(box.title)}</b><span>${esc(box.detail)}</span></div>
   ${dialFoot(ctx, tool, s, now, state === "limited" ? resetAt : null)}
+  ${opts.move === "main" ? `<p class="dial-takeout"><button type="button" class="btn small" data-move="${tool}" data-to="main">${t("dock.take")}</button></p>` : ""}
 </article>`;
 }
 
@@ -828,9 +883,7 @@ ${s.weeklyLocks.length ? `<section class="card lock"><p>🏆 <b>${t("lock.title"
 </section>
 <div class="toast" data-toast role="status" aria-live="polite" hidden></div>
 
-<section class="dials ${toolsOf(s).length === 3 ? "n3" : ""}">
-  ${toolsOf(s).map((tool) => dial(ctx, tool, s, now)).join("")}
-</section>
+${dialArea(ctx, s, now)}
 
 ${hasCli ? "" : setupCard(ctx, { origin, hasCli, last })}
 ${hasPush ? "" : `<a class="card nudge" href="/settings#notify"><span aria-hidden="true">📱</span><span><b>${t("dash.push.h")}</b><small>${t("dash.push.p")}</small></span><span class="chev-r" aria-hidden="true">›</span></a>`}

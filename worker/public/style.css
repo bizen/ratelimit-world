@@ -827,3 +827,52 @@ input.code { font: 700 28px var(--mono); text-align: center; letter-spacing: .12
 @keyframes rw-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .refresh-fab.spin svg { animation: none; } }
 body.pwa { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+
+/* ダイヤル: 左にメイン、右に収納 (縦長の棚に小さなリング) */
+.dial-area { margin: 16px 0; }
+.dial-area .dials { margin: 0; }
+.dial-area.has-dock { display: grid; grid-template-columns: minmax(0, 1fr) 64px; gap: 10px; align-items: start; }
+.dials.n1 { grid-template-columns: 1fr; }
+.dials.n2 { grid-template-columns: 1fr 1fr; }
+.dial h3 { position: relative; }
+.dial-move { position: absolute; right: -4px; top: -4px; width: 26px; height: 26px; border-radius: 8px; border: 0; background: rgb(0 0 0 / .06); color: inherit; display: grid; place-items: center; cursor: pointer; opacity: .7; }
+.dial-move:hover { opacity: 1; }
+.dial-move svg { width: 14px; height: 14px; }
+.dial.tool-claude .dial-move { background: rgb(255 255 255 / .18); }
+.dial-takeout { margin: 12px 0 0; text-align: center; }
+.dock { position: sticky; top: 12px; background: var(--surface); border: 2px solid var(--line); border-radius: 22px; padding: 10px 0 12px; box-shadow: var(--shadow); }
+.dock-h { margin: 0 0 8px; text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); }
+.dock ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; justify-items: center; }
+.dock-item { display: grid; justify-items: center; gap: 3px; background: none; border: 0; padding: 0; cursor: pointer; color: var(--ink); font: inherit; }
+.mini-ring { position: relative; width: 48px; height: 48px; display: grid; place-items: center; }
+.mini-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.mini-ring .track { fill: none; stroke: var(--line); stroke-width: 5; }
+.mini-ring .fill { fill: none; stroke: var(--violet); stroke-width: 5; stroke-linecap: round; }
+.mini-ring .tool-icon { width: 20px; height: 20px; background: none; }
+.mini-ring .tool-icon svg { position: static; transform: none; width: 20px; height: 20px; }
+.dock-item.tool-claude .fill { stroke: #D97757; } .dock-item.tool-claude .tool-icon { color: #D97757; }
+.dock-item.tool-codex .fill { stroke: #0D0D0D; } .dock-item.tool-codex .tool-icon { color: var(--ink); }
+.dock-item.tool-antigravity .fill { stroke: #1A73E8; } .dock-item.tool-antigravity .tool-icon { color: #1A73E8; }
+.dock-item.ready .fill { stroke: var(--go); }
+.mini-text { font: 700 11px var(--mono); }
+.dock-dialog { border: 0; padding: 0; background: transparent; width: min(380px, calc(100vw - 24px)); overflow: visible; }
+.dock-dialog::backdrop { background: rgb(10 8 30 / .55); }
+.dock-dialog .dial { margin: 0; }
+.dock-close { position: absolute; right: -6px; top: -12px; z-index: 2; width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--ink); color: var(--paper); font-size: 20px; cursor: pointer; box-shadow: var(--shadow); }
+@media (min-width: 721px) { .dial-area.has-dock { grid-template-columns: minmax(0, 1fr) 84px; } .mini-ring { width: 56px; height: 56px; } }
+/* 収納ボタンはカードの右上の角に。見出しは押しのけない */
+.dial { position: relative; }
+.dial h3 { position: static; }
+.dial-move { right: 8px; top: 8px; }
+@media (max-width: 720px) {
+  .dial-area.has-dock .dial { padding-left: 8px; padding-right: 8px; }
+  .dial-area.has-dock .dials.n2 .dial h3 { font-size: 13px; white-space: nowrap; padding: 0 22px; }
+  .dial-area.has-dock .dials.n2 .dial h3 .tool-icon { width: 20px; height: 20px; }
+}
+.mini-ring .tool-icon { display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border-radius: 0; background: none; box-shadow: none; }
+.tn-short { display: none; }
+@media (max-width: 720px) {
+  .dial-area.has-dock .dials.n2 .tn-long { display: none; }
+  .dial-area.has-dock .dials.n2 .tn-short { display: inline; }
+  .dial-area.has-dock .dials.n2 .dial-move { width: 22px; height: 22px; right: 6px; top: 6px; }
+}

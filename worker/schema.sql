@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   notify TEXT NOT NULL DEFAULT '{"hit":true,"reset":true,"late":true,"pinch":true,"goal":true}',
   public INTEGER NOT NULL DEFAULT 1,
   claude_statusline INTEGER NOT NULL DEFAULT 0, -- Claude Code のステータスラインを中継して使用率を読むか (オン/オフ)
+  main_tools TEXT,                                 -- ダッシュボードでメイン (大きなダイヤル) に置くツール '["claude","codex"]'。ほかは収納
   warmup INTEGER NOT NULL DEFAULT 0,               -- 自動ウォームアップ (リセットの瞬間に PC から短い問い合わせを送って次の枠を始める)
   warmup_anchor TEXT,                              -- 毎日そろえる時刻 '08:00' (10分単位)。NULL ならリセットの瞬間に始める
   warmup_anchor_since INTEGER,                     -- そろえる時刻を決めた時刻 (これより後にリセットされた枠だけ、そろえた時刻から出遅れを数える)
