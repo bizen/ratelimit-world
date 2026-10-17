@@ -17,7 +17,7 @@ import { spawn, spawnSync, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -430,11 +430,13 @@ function nextResets(claude, codex) {
   const out = {};
   // ステータスラインの中継 (オンの人だけ) があれば、Claude Code も正確な使用率とリセット時刻
   const cu = readJson(CLAUDE_USAGE_FILE, null);
+  // 推定するときも、中継や Cowork で分かっている正確なリセット時刻 (過ぎたものも) を枠の区切りにする
+  const exact = [...claude.hits, ...(cu?.five?.resetAt ? [{ reset: cu.five.resetAt }] : []), ...(claude.current?.resetAt ? [{ reset: claude.current.resetAt }] : [])];
   if (cu?.five?.resetAt > now) out.claude = { resetAt: cu.five.resetAt, exact: true, pct: cu.five.pct, at: cu.at };
   // Cowork のログにある今の枠 (正確なリセット時刻。使用率は 90% を超えたときなどにだけ入る)
   else if (claude.current?.resetAt > now) out.claude = { resetAt: claude.current.resetAt, exact: true, pct: claude.current.pct, at: claude.current.at };
   else {
-    const c = claudeWindowEnd([...claude.activity, ...claude.usage.map((u) => u.ts)], claude.hits);
+    const c = claudeWindowEnd([...claude.activity, ...claude.usage.map((u) => u.ts)], exact);
     if (c.resetAt > now) out.claude = c;
   }
   if (cu?.week?.resetAt > now) (out.claude ??= {}).week = cu.week;
@@ -634,6 +636,7 @@ function scheduleWarmups(setting) {
   <key>StartCalendarInterval</key><dict><key>Month</key><integer>${at.getMonth() + 1}</integer><key>Day</key><integer>${at.getDate()}</integer><key>Hour</key><integer>${at.getHours()}</integer><key>Minute</key><integer>${at.getMinutes()}</integer></dict>
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(PATH)}</string></dict>
   <key>StandardInPath</key><string>/dev/null</string>
+  <key>AbandonProcessGroup</key><true/>
 </dict></plist>
 `;
     removeWarmup(tool);
@@ -649,11 +652,11 @@ function scheduleWarmups(setting) {
 // 予約の時刻に launchd から呼ばれる: 条件を確かめて 1回だけ送り、結果をすぐサーバーへ送る
 async function warmup(tool, at, since) {
   const cfg = loadConfig();
+  // 予約ファイルを消して記録を残す。launchd からの取り外しは、このあとの送信 (別のプロセス) が予約を入れ直すときに行う。
+  // ここで外すと、動いている自分自身が止められてしまう
   const finish = (msg) => {
     log(`warmup ${tool}: ${msg}`);
-    // 自分の予約を外す (同じ日時に来月また動かないように)。自分を止めないよう、別のプロセスで外す
     fs.rmSync(warmupPlist(tool), { force: true });
-    try { spawn("launchctl", ["bootout", `gui/${process.getuid()}/${warmupLabel(tool)}`], { detached: true, stdio: "ignore" }).unref(); } catch {}
   };
   if (!WARMUP_TOOLS.includes(tool) || !(at > 0)) return finish("bad arguments");
   since = since > 0 ? since : at;
@@ -670,8 +673,9 @@ async function warmup(tool, at, since) {
     : ["exec", "--skip-git-repo-check", "-s", "read-only", "-c", 'model_reasoning_effort="low"', "Reply with OK only. Do not run any commands."];
   const r = spawnSync(bin, args, { cwd: dir, stdio: ["ignore", "ignore", "ignore"], timeout: 5 * 60000 });
   fs.rmSync(dir, { recursive: true, force: true });
-  await sync({ quiet: true, reason: "warmup" });
   finish(r.error ? `failed: ${r.error.message}` : `sent (exit ${r.status})`);
+  // 新しい枠をすぐサーバーへ送り、次の予約を入れ直す。自分が終わってから動くよう、少し待つ別のプロセスで
+  spawn("/bin/sh", ["-c", `sleep 3; "${process.execPath}" "${INSTALLED_SCRIPT}" sync --quiet --reason warmup`], { detached: true, stdio: "ignore" }).unref();
 }
 
 // ---------- hooks ----------
