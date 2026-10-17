@@ -876,3 +876,6 @@ body.pwa { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
   .dial-area.has-dock .dials.n2 .tn-short { display: inline; }
   .dial-area.has-dock .dials.n2 .dial-move { width: 22px; height: 22px; right: 6px; top: 6px; }
 }
+/* 収納はダイヤルと同じ縦の長さ (リングは上から並ぶ) */
+.dial-area.has-dock { align-items: stretch; }
+.dial-area.has-dock .dock { position: static; align-self: stretch; }
