@@ -17,7 +17,7 @@ import { spawn, spawnSync, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.7.1";
+const VERSION = "0.8.0";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -32,6 +32,8 @@ const DAY = 24 * HOUR;
 const WINDOW_MS = 5 * HOUR;
 const WEEK_MS = 7 * DAY;
 const HOOK_MARK = "ratelimit-world.mjs";
+// 5時間枠は、残り 5% (95% 使った) で「使い切った」とみなす。0% まで使うと作業が止まってしまうので、その手前で達成にする
+const DONE_PCT = 95;
 
 // 表示の言語: RATELIMIT_WORLD_LANG > サイトで選んだ言語 (ログイン後に保存) > LC_ALL / LANG > OS の設定。日本語以外は英語
 let ja = null;
@@ -259,7 +261,8 @@ export function scanCowork(sinceMs) {
         continue;
       }
       if (info.rateLimitType !== "five_hour" || reset - ts > WINDOW_MS + 15 * 60000) continue;
-      if (info.status === "rejected") hits.push({ ts, reset });
+      // リミット到達か、使用率が DONE_PCT を超えた (Cowork は 90% を超えると使用率を書く)
+      if (info.status === "rejected" || (Number.isFinite(info.utilization) && info.utilization * 100 >= DONE_PCT)) hits.push({ ts, reset });
       if (!current || ts > current.at) {
         const pct = info.status === "rejected" ? 100 : Number.isFinite(info.utilization) ? Math.round(info.utilization * 100) : null;
         current = { at: ts, resetAt: reset, pct };
@@ -303,7 +306,7 @@ export function scanCodex(sinceMs) {
             week: wk && wreset ? { pct: Number(wk.used_percent), resetAt: wreset } : current?.week ?? null,
           };
         }
-        if (lim && reset && Number(lim.used_percent) >= 100) hits.push({ ts, reset });
+        if (lim && reset && Number(lim.used_percent) >= DONE_PCT) hits.push({ ts, reset });
         if (lim && reset) {
           const key = Math.round(reset / 60000);
           const o = opened.get(key);
@@ -374,7 +377,7 @@ export function updateAntigravity(state, groups, now = Date.now()) {
     const o = st.opened.find((x) => x.group === g.name && near(x.resetAt, resetAt, 15 * 60000));
     if (o) o.peak = Math.max(o.peak, used);
     else st.opened.push({ group: g.name, resetAt, peak: used });
-    if (frac <= 0.001 && !st.hits.some((h) => h.group === g.name && near(h.reset, resetAt, 15 * 60000))) st.hits.push({ ts: now, reset: resetAt, group: g.name });
+    if (frac <= 1 - DONE_PCT / 100 && !st.hits.some((h) => h.group === g.name && near(h.reset, resetAt, 15 * 60000))) st.hits.push({ ts: now, reset: resetAt, group: g.name });
   }
   // 70日より前の記録は捨てる
   const keep = now - 70 * DAY;
@@ -548,6 +551,8 @@ export function collect(days) {
   const since = Date.now() - days * DAY;
   // 再開時刻を求めるため、到達より少し前からのログも読む
   const claude = scanClaude(since - WINDOW_MS);
+  // ステータスラインの中継で 95% に届いた枠も、Claude Code の到達として数える
+  for (const h of readJson(CLAUDE_USAGE_FILE, {}).fiveHits ?? []) if (h.resetAt >= since - WINDOW_MS) claude.hits.push({ ts: h.hitAt, reset: h.resetAt });
   const codex = scanCodex(since - WINDOW_MS);
   const ag = scanAntigravity(since - WINDOW_MS);
   const windows = [...toWindows("claude", claude), ...toWindows("codex", codex), ...toWindows("antigravity", ag)]
@@ -858,7 +863,11 @@ function recordClaudeUsage(input) {
   const now = Date.now();
   const cur = readJson(CLAUDE_USAGE_FILE, {});
   const pick = (x) => (x && x.used_percentage != null && toMs(x.resets_at) ? { pct: Number(x.used_percentage), resetAt: toMs(x.resets_at) } : null);
-  const next = { at: now, five: pick(rl.five_hour), week: pick(rl.seven_day), weeklyHits: cur.weeklyHits ?? [] };
+  const next = { at: now, five: pick(rl.five_hour), week: pick(rl.seven_day), weeklyHits: cur.weeklyHits ?? [], fiveHits: cur.fiveHits ?? [] };
+  // 5時間枠が DONE_PCT に届いたら「使い切った」として覚えておく (リミットに当たる前に達成にできる)
+  const f = next.five;
+  if (f && f.pct >= DONE_PCT && !next.fiveHits.some((h) => Math.abs(h.resetAt - f.resetAt) < 15 * 60000)) next.fiveHits.push({ hitAt: now, resetAt: f.resetAt });
+  next.fiveHits = next.fiveHits.filter((h) => h.resetAt > now - 30 * DAY);
   // 週間枠が 100% になったら到達として覚えておく (次の送信で届ける)
   const w = next.week;
   if (w && w.pct >= 100 && !next.weeklyHits.some((h) => Math.abs(h.resetAt - w.resetAt) < HOUR)) next.weeklyHits.push({ hitAt: now, resetAt: w.resetAt });

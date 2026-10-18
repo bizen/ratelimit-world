@@ -710,6 +710,12 @@ function dialModel(ctx, tool, s, now) {
     // 毎日そろえる設定で、リセットのあと予定の時刻まで待つなら、リセットの瞬間に「GO」ではなく待機に切り替える
     if (x.dueAt > x.resetAt) dueLater = x.dueAt;
     box = { icon: BOLT, title: t("box.limited"), detail: t("box.resetAt", localTime(x.resetAt, s.tz)) };
+    // 95% で達成した枠 (まだ少し残っている): 実際の残量を出し、「達成」と伝える
+    const live = s.nextReset?.[tool];
+    if (live?.pct != null && live.pct < 100 && Math.abs(live.resetAt - x.resetAt) < 15 * 60000) {
+      usedPct = live.pct;
+      box = { title: t("box.doneEarly"), detail: t("box.resetAt", localTime(x.resetAt, s.tz)) };
+    }
   } else if (s.nextReset?.[tool]?.resetAt > now) {
     // 使用中 (中継オフの Claude Code はリセット時刻が推定で、使用率は不明)
     const r = s.nextReset[tool];

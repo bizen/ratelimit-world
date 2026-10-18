@@ -56,3 +56,13 @@ test("Antigravity: started windows, limit hits and the restart time from /usage 
   assert.equal(st.hits.length, 1);
   assert.equal(st.weekly.length, 1);
 });
+
+test("a window counts as maxed at 95% used (5% left)", async () => {
+  const { updateAntigravity } = await import("../../cli/ratelimit-world.mjs");
+  const t0 = Date.UTC(2026, 9, 18, 0, 0), reset = t0 + 4 * 3600e3;
+  const usage = (frac) => [{ name: "Gemini Models", buckets: [{ window: "5h", remaining_fraction: frac, reset_time: new Date(reset).toISOString() }] }];
+  let st = updateAntigravity({}, usage(0.06), t0);
+  assert.equal(st.hits.length, 0);
+  st = updateAntigravity(st, usage(0.05), t0 + 60e3);
+  assert.equal(st.hits.length, 1);
+});
