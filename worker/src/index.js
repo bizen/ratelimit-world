@@ -4,6 +4,7 @@ import { sendPush, b64u } from "./webpush.js";
 import { pickLang, tr, LANGS } from "./i18n.js";
 import { notice } from "./notice.js";
 import * as pages from "./pages.js";
+import qrcode from "qrcode-generator";
 import { svgToPng, avatarData } from "./og.js";
 import { leagueWeek, prevWeek, leagueXp, settle, nextTier, byStanding, zones, LEAGUE_SIZE } from "./league.js";
 
@@ -166,6 +167,27 @@ async function statsFor(env, user, now = Date.now()) {
 async function writtenTotal(env, userId) {
   const r = await env.DB.prepare("SELECT COALESCE(SUM(tokens), 0) AS n FROM output_days WHERE user_id = ?").bind(userId).first();
   return r.n;
+}
+
+// ---------- phone ----------
+// PC からスマホへの引き継ぎ: 1回だけ・10分だけ使えるリンクを QR コードにする。読むとそのスマホでもログインした状態になる
+async function phoneLink(env, user, origin) {
+  const token = randomToken(24);
+  const expiresAt = Date.now() + 10 * MIN;
+  await env.DB.prepare("INSERT INTO phone_links (token_hash, user_id, expires_at) VALUES (?, ?, ?)").bind(await sha256(token), user.id, expiresAt).run();
+  const url = `${origin}/m/${token}`;
+  const q = qrcode(0, "M");
+  q.addData(url);
+  q.make();
+  return { url, expiresAt, svg: q.createSvgTag({ cellSize: 4, margin: 2, scalable: true }) };
+}
+
+async function usePhoneLink(env, token) {
+  const h = await sha256(token);
+  const row = await env.DB.prepare("SELECT user_id FROM phone_links WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?").bind(h, Date.now()).first();
+  if (!row) return null;
+  const r = await env.DB.prepare("UPDATE phone_links SET used_at = ? WHERE token_hash = ? AND used_at IS NULL").bind(Date.now(), h).run();
+  return r.meta.changes ? row.user_id : null;
 }
 
 // ---------- friends ----------
@@ -666,6 +688,8 @@ async function meSummary(env, user) {
     },
     plans: { claude: user.claude_plan, codex: user.codex_plan },
     stats: { streak: s.streak, todayCount: s.todayCount, goal: s.goal, xp: s.xp, weekXp: s.weekXp },
+    // 通知を受け取る端末の数 (オンボーディングで、スマホがオンになったら気づくため)
+    pushDevices: (await env.DB.prepare("SELECT COUNT(*) AS n FROM push_subs WHERE user_id = ?").bind(user.id).first()).n,
   };
 }
 
@@ -726,6 +750,7 @@ async function runCron(env, now = Date.now()) {
       env.DB.prepare("DELETE FROM sent WHERE at < ?").bind(now - 14 * DAY),
       env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
       env.DB.prepare("DELETE FROM cli_logins WHERE expires_at < ?").bind(now),
+      env.DB.prepare("DELETE FROM phone_links WHERE expires_at < ?").bind(now - DAY),
     ]);
   }
 }
@@ -871,6 +896,17 @@ async function route(req, env) {
     ]);
     return html(pages.dashboard(ctx, s, { origin, vapidKey: env.VAPID_PUBLIC_KEY || "", hasCli: hasCli.n > 0, hasPush: push.n > 0, friends, leagues }));
   }
+  // スマホへの引き継ぎ: QR コードのリンク → ログイン → スマホの準備ページ
+  const phoneMatch = p.match(/^\/m\/([\w-]{20,64})$/);
+  if (phoneMatch) {
+    const userId = await usePhoneLink(env, phoneMatch[1]);
+    if (!userId) return html(pages.message(ctx, ctx.t("phone.expired.h"), ctx.t("phone.expired.p")), 410);
+    return startSession(env, userId, "/phone");
+  }
+  if (p === "/phone") {
+    if (!user) return redirect("/login?next=/phone");
+    return html(pages.phonePage(ctx, { vapidKey: env.VAPID_PUBLIC_KEY || "" }));
+  }
   if (p === "/settings") {
     if (!user) return redirect("/login?next=/settings");
     const hasCli = await env.DB.prepare("SELECT COUNT(*) AS n FROM cli_tokens WHERE user_id = ?").bind(user.id).first();
@@ -885,6 +921,7 @@ async function route(req, env) {
       return json({ ok: true });
     }
     if (p === "/api/settings" && m === "POST") return saveSettings(req, env, user);
+    if (p === "/api/phone-link" && m === "POST") return json(await phoneLink(env, user, origin));
     // ダイヤルの出し入れ: メインに置くツールの一覧を更新する (収納はそれ以外)
     if (p === "/api/dock" && m === "POST") {
       const b = await req.json().catch(() => ({}));

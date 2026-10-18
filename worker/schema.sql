@@ -146,3 +146,11 @@ CREATE TABLE IF NOT EXISTS output_days (
   tokens INTEGER NOT NULL,
   PRIMARY KEY (user_id, day, tool)
 );
+
+-- スマホへの引き継ぎ: PC の画面の QR コードを読むと、そのスマホでもログインできる (10分・1回だけ)
+CREATE TABLE IF NOT EXISTS phone_links (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER
+);

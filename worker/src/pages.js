@@ -814,6 +814,7 @@ export function settingsPage(ctx, { origin, vapidKey, hasCli, notify }) {
 <h1 class="h2 page-h">⚙️ ${t("settings.h")}</h1>
 <section class="card" id="notify">
   <h2 class="h3">${t("push.h")}</h2>
+  ${isPhoneUa(ctx) ? "" : `<p>${t("phone.settings.p")}</p>${phoneQr(ctx)}<p class="muted small push-or">${t("phone.or")}</p>`}
   <p class="muted" data-push-hint>${t("push.ios")}</p>
   <div class="row">
     <button class="btn" data-push-enable>${t("push.enable")}</button>
@@ -933,6 +934,21 @@ ${friendsStrip(ctx, friends, now)}`,
   });
 }
 
+// スマホで通知を受け取る: PC で見ているときは QR コード (読むとスマホでもログインして準備ページが開く)。
+// すでにスマホで見ているときは、その場で通知をオンにする
+const isPhoneUa = (ctx) => /iPhone|iPad|Android/i.test(ctx.ua || "");
+function phoneQr(ctx) {
+  const { t } = ctx;
+  return `<div class="phone-qr" data-phone-qr>
+    <button type="button" class="btn big" data-phone-qr-show>📱 ${t("phone.qr.show")}</button>
+    <div class="qr-box" data-qr-box hidden>
+      <div class="qr" data-qr></div>
+      <div class="qr-text"><b>${t("phone.qr.scan")}</b><span>${t("phone.qr.how")}</span><small data-qr-exp></small></div>
+    </div>
+    <p class="qr-done" data-phone-done hidden>✅ ${t("phone.qr.done")}</p>
+  </div>`;
+}
+
 // インストールのコマンド: Mac / Linux はシェル、Windows は PowerShell。見ている端末に合わせて最初のタブを選ぶ
 function installCmds(ctx, origin, { copy = true } = {}) {
   const { t } = ctx;
@@ -943,6 +959,38 @@ function installCmds(ctx, origin, { copy = true } = {}) {
     <div class="os-tabs">${cmds.map(([k, label]) => tab(k, label)).join("")}</div>
     ${cmds.map(([k, , c]) => `<pre class="cmd" data-os="${k}" ${(k === "win") === win ? "" : "hidden"}><code>${esc(c)}</code>${copy ? `<button class="copy" data-copy aria-label="${t("copy.cmd")}">${t("copy")}</button>` : ""}</pre>`).join("")}
   </div>`;
+}
+
+// スマホの準備ページ (QR コードを読んだあと): iPhone はホーム画面に追加してから、Android はそのまま通知をオン
+export function phonePage(ctx, { vapidKey }) {
+  const { t } = ctx;
+  return layout(ctx, {
+    title: t("phone.title"),
+    head: `<meta name="rw-vapid" content="${esc(vapidKey)}">`,
+    body: `
+<section class="card narrow phone-page" data-phone-page>
+  <p class="eyebrow">${esc(t("wel.hello", ctx.user.login))}</p>
+  <h1 class="h2">${t("phone.h")}</h1>
+  <div data-ios-a2hs hidden>
+    <p>${t("phone.ios.p")}</p>
+    <ol class="a2hs">
+      <li>${t("phone.ios.1")}</li>
+      <li>${t("phone.ios.2")}</li>
+      <li>${t("phone.ios.3")}</li>
+    </ol>
+    <p class="muted small">${t("phone.ios.note")}</p>
+  </div>
+  <div data-push-block>
+    <p>${t("phone.push.p")}</p>
+    <div class="row">
+      <button class="btn big" data-push-enable>${t("push.enable")}</button>
+      <button class="btn ghost" data-push-test hidden>${t("push.test")}</button>
+    </div>
+    <p class="status" data-push-status role="status"></p>
+  </div>
+  <p><a class="btn ghost" href="/me">${t("phone.toDash")}</a></p>
+</section>`,
+  });
 }
 
 // ---------- onboarding ----------
@@ -961,6 +1009,7 @@ export function welcome(ctx, { origin, vapidKey }) {
     <h1 class="h1">${t("wel.link.h")}</h1>
     <p>${t("wel.link.p")}</p>
     ${installCmds(ctx, origin)}
+    <p class="muted small">${t("wel.link.node")}</p>
     <p class="waiting" data-link-wait><i class="dot"></i>${t("wel.wait")}</p>
     <div class="reveal" data-link-done hidden>
       <p class="reveal-title">${t("wel.done")}</p>
@@ -1000,12 +1049,14 @@ export function welcome(ctx, { origin, vapidKey }) {
     <button class="link back-link" data-back="2">${t("wel.back.goal")}</button>
     <h1 class="h1">${t("wel.push.h")}</h1>
     <p>${t("wel.push.p")}</p>
+    ${isPhoneUa(ctx) ? "" : `${phoneQr(ctx)}<details class="push-here"><summary>${t("phone.here")}</summary>`}
     <p class="muted" data-push-hint>${t("push.ios")}</p>
     <div class="row">
-      <button class="btn big" data-push-enable>${t("push.enable")}</button>
+      <button class="btn ${isPhoneUa(ctx) ? "big" : "ghost"}" data-push-enable>${t("push.enable")}</button>
       <button class="btn ghost" data-push-test hidden>${t("push.test")}</button>
     </div>
     <p class="status" data-push-status role="status"></p>
+    ${isPhoneUa(ctx) ? "" : "</details>"}
     <p><button class="btn ghost" data-finish>${t("wel.finish")}</button> <button class="link" data-finish>${t("wel.skipPush")}</button></p>
   </div>
 </section>`,

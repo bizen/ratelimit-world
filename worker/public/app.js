@@ -193,6 +193,35 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
     render();
   }
 
+  // ---------- スマホへの引き継ぎ (QR コード) ----------
+  // 押すと 10分だけ使えるリンクの QR コードを出す。スマホで通知がオンになったら (通知を受け取る端末が増えたら) 知らせる
+  for (const box of $$("[data-phone-qr]")) {
+    const show = $("[data-phone-qr-show]", box), qrBox = $("[data-qr-box]", box), exp = $("[data-qr-exp]", box), done = $("[data-phone-done]", box);
+    let timer = null;
+    show.addEventListener("click", async () => {
+      show.disabled = true;
+      const [link, me] = await Promise.all([
+        fetch("/api/phone-link", { method: "POST" }).then((r) => r.json()).catch(() => null),
+        fetch("/api/me").then((r) => r.json()).catch(() => null),
+      ]);
+      show.disabled = false;
+      if (!link?.svg) return;
+      $("[data-qr]", box).innerHTML = link.svg;
+      qrBox.hidden = false;
+      show.hidden = true;
+      const base = me?.pushDevices ?? 0;
+      clearInterval(timer);
+      timer = setInterval(async () => {
+        const left = link.expiresAt - Date.now();
+        if (left <= 0) { clearInterval(timer); exp.textContent = T("c.qrExpired"); qrBox.classList.add("expired"); show.hidden = false; return; }
+        exp.textContent = T("c.qrExp", { m: Math.ceil(left / 60000) });
+        const now = await fetch("/api/me").then((r) => r.json()).catch(() => null);
+        if (now?.pushDevices > base) { clearInterval(timer); qrBox.hidden = true; done.hidden = false; }
+      }, 3000);
+      exp.textContent = T("c.qrExp", { m: 10 });
+    });
+  }
+
   // ---------- push ----------
   const enableBtn = $("[data-push-enable]");
   if (enableBtn) {
@@ -201,7 +230,14 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
     const vapid = document.querySelector("meta[name=rw-vapid]")?.content;
     const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
     const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
-    if (standalone || !/iPhone|iPad/.test(navigator.userAgent)) $("[data-push-hint]").hidden = true;
+    const hint = $("[data-push-hint]");
+    if (hint && (standalone || !/iPhone|iPad/.test(navigator.userAgent))) hint.hidden = true;
+    // スマホの準備ページ: iPhone でホーム画面から開いていなければ、先に「ホーム画面に追加」の手順だけを見せる
+    const phonePage = $("[data-phone-page]");
+    if (phonePage && /iPhone|iPad/.test(navigator.userAgent) && !standalone) {
+      $("[data-ios-a2hs]", phonePage).hidden = false;
+      $("[data-push-block]", phonePage).hidden = true;
+    }
 
     const b64 = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
     const setOn = (on) => {
