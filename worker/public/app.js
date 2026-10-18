@@ -148,6 +148,11 @@ const T = (k, v = {}) => String((window.RW_T || {})[k] ?? k).replace(/\{(\w+)\}/
   }
   for (const b of $$("[data-copy]")) b.addEventListener("click", () => copy($("code", b.parentElement).textContent, b));
   for (const b of $$("[data-copy-text]")) b.addEventListener("click", () => copy(b.dataset.copyText, b));
+  // インストールのコマンド: Mac / Linux と Windows を切り替える
+  for (const box of $$("[data-install]")) for (const tab of $$("[data-os-tab]", box)) tab.addEventListener("click", () => {
+    for (const x of $$("[data-os-tab]", box)) x.classList.toggle("on", x === tab);
+    for (const pre of $$("[data-os]", box)) pre.hidden = pre.dataset.os !== tab.dataset.osTab;
+  });
 
   // ---------- settings ----------
   const form = $("[data-settings]");

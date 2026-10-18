@@ -188,7 +188,7 @@ export function landing(ctx, origin) {
   <div class="how-item">
     <h2 class="h3">${t("lp.how1.h")}</h2>
     <p>${t("lp.how1.p")}</p>
-    <pre class="cmd"><code>curl -fsSL ${esc(origin)}/install.sh | sh</code></pre>
+    ${installCmds(ctx, origin, { copy: false })}
   </div>
   <div class="how-item">
     <h2 class="h3">${t("lp.how2.h")}</h2>
@@ -795,7 +795,7 @@ function setupCard(ctx, { origin, hasCli, last }) {
   return `<section class="card ${hasCli ? "" : "attention"}" id="setup">
   <h2 class="h3">${t(hasCli ? "setup.h.linked" : "setup.h.new")}</h2>
   <p>${t(hasCli ? "setup.p.linked" : "setup.p.new")}</p>
-  <pre class="cmd"><code>curl -fsSL ${esc(origin)}/install.sh | sh</code><button class="copy" data-copy aria-label="${t("copy.cmd")}">${t("copy")}</button></pre>
+  ${installCmds(ctx, origin)}
   ${planBadges(ctx, user) ? `<p class="plans">${t("setup.plans")} ${planBadges(ctx, user)}</p>` : ""}
   <p class="muted small">${t("setup.note", last)}</p>
 </section>`;
@@ -933,10 +933,21 @@ ${friendsStrip(ctx, friends, now)}`,
   });
 }
 
+// インストールのコマンド: Mac / Linux はシェル、Windows は PowerShell。見ている端末に合わせて最初のタブを選ぶ
+function installCmds(ctx, origin, { copy = true } = {}) {
+  const { t } = ctx;
+  const win = /Windows/i.test(ctx.ua || "");
+  const cmds = [["mac", t("os.mac"), `curl -fsSL ${origin}/install.sh | sh`], ["win", t("os.win"), `irm ${origin}/install.ps1 | iex`]];
+  const tab = (k, label) => `<button type="button" class="tab ${(k === "win") === win ? "on" : ""}" data-os-tab="${k}">${label}</button>`;
+  return `<div class="install" data-install>
+    <div class="os-tabs">${cmds.map(([k, label]) => tab(k, label)).join("")}</div>
+    ${cmds.map(([k, , c]) => `<pre class="cmd" data-os="${k}" ${(k === "win") === win ? "" : "hidden"}><code>${esc(c)}</code>${copy ? `<button class="copy" data-copy aria-label="${t("copy.cmd")}">${t("copy")}</button>` : ""}</pre>`).join("")}
+  </div>`;
+}
+
 // ---------- onboarding ----------
 export function welcome(ctx, { origin, vapidKey }) {
   const { user, t } = ctx;
-  const cmd = `curl -fsSL ${origin}/install.sh | sh`;
   return layout(ctx, {
     title: t("wel.title"),
     head: `<meta name="rw-vapid" content="${esc(vapidKey)}">`,
@@ -949,7 +960,7 @@ export function welcome(ctx, { origin, vapidKey }) {
     <p class="eyebrow">${esc(t("wel.hello", user.login))}</p>
     <h1 class="h1">${t("wel.link.h")}</h1>
     <p>${t("wel.link.p")}</p>
-    <pre class="cmd"><code>${esc(cmd)}</code><button class="copy" data-copy aria-label="${t("copy.cmd")}">${t("copy")}</button></pre>
+    ${installCmds(ctx, origin)}
     <p class="waiting" data-link-wait><i class="dot"></i>${t("wel.wait")}</p>
     <div class="reveal" data-link-done hidden>
       <p class="reveal-title">${t("wel.done")}</p>

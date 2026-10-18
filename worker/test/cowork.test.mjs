@@ -66,3 +66,16 @@ test("a window counts as maxed at 95% used (5% left)", async () => {
   st = updateAntigravity(st, usage(0.05), t0 + 60e3);
   assert.equal(st.hits.length, 1);
 });
+
+test("Windows: Task Scheduler scripts for the 5-minute sync and a one-off warm-up", async () => {
+  const { winTaskScript } = await import("../../cli/ratelimit-world.mjs");
+  const vbs = "C:\\Users\\Yu Ito\\.ratelimit-world\\run-hidden.vbs";
+  const every = winTaskScript({ label: "world.ratelimit.sync", args: ["sync", "--quiet", "--reason", "timer"], every: 5, vbs });
+  assert.match(every, /Register-ScheduledTask -TaskName 'ratelimit-world-sync'/);
+  assert.match(every, /-RepetitionInterval \(New-TimeSpan -Minutes 5\)/);
+  assert.match(every, /-Execute 'wscript\.exe' -Argument '"C:\\Users\\Yu Ito\\\.ratelimit-world\\run-hidden\.vbs" "sync" "--quiet" "--reason" "timer"'/);
+  assert.match(every, /-StartWhenAvailable/);
+  const once = winTaskScript({ label: "world.ratelimit.warmup.claude", args: ["warmup", "claude", "1", "2"], at: new Date(2026, 9, 18, 8, 0), vbs });
+  assert.match(once, /-TaskName 'ratelimit-world-warmup-claude'/);
+  assert.match(once, /New-ScheduledTaskTrigger -Once -At '2026-10-18T08:00:00'/);
+});

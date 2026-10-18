@@ -72,7 +72,7 @@ const safeNext = (n) => (n && /^\/[^/\\]/.test(n) ? n : "/me");
 const makeCtx = (req, user) => {
   const lang = pickLang(req, user);
   const url = new URL(req.url);
-  return { user, lang, t: tr(lang), path: url.pathname + url.search };
+  return { user, lang, t: tr(lang), path: url.pathname + url.search, ua: req.headers.get("user-agent") || "" };
 };
 
 async function githubLogin(req, env) {
@@ -744,6 +744,22 @@ node "$HOME/.ratelimit-world/ratelimit-world.mjs" setup --server "${origin}" < /
 `;
 }
 
+// Windows: PowerShell で `irm https://ratelimit.world/install.ps1 | iex`
+function installPowerShell(origin) {
+  return `# ratelimit.world setup (Windows): put the CLI in ~/.ratelimit-world and log in
+$ErrorActionPreference = 'Stop'
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  if ((Get-Culture).Name -like 'ja*') { Write-Host 'Node.js 18 以上が必要です: https://nodejs.org' } else { Write-Host 'Node.js 18 or later is required: https://nodejs.org' }
+  return
+}
+$dir = Join-Path $HOME '.ratelimit-world'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$cli = Join-Path $dir 'ratelimit-world.mjs'
+Invoke-WebRequest -UseBasicParsing -Uri '${origin}/cli.mjs' -OutFile $cli
+& node $cli setup --server '${origin}'
+`;
+}
+
 // ---------- router ----------
 async function route(req, env) {
   const url = new URL(req.url);
@@ -754,7 +770,7 @@ async function route(req, env) {
   // 正式なドメイン (CANONICAL_ORIGIN) ができたら、古いアドレス (workers.dev) で開いたページはそちらへ移す。
   // PC の CLI が使う API とインストール用のファイル、ログインの途中 (/auth/) は古いアドレスのままでも動かす
   const canonical = env.CANONICAL_ORIGIN;
-  if (canonical && origin !== canonical && (m === "GET" || m === "HEAD") && !/^\/(api|auth)\//.test(p) && p !== "/install.sh") {
+  if (canonical && origin !== canonical && (m === "GET" || m === "HEAD") && !/^\/(api|auth)\//.test(p) && p !== "/install.sh" && p !== "/install.ps1") {
     return redirect(canonical + p + url.search, {}, 301);
   }
 
@@ -762,6 +778,7 @@ async function route(req, env) {
   if (p === "/api/cli/start" && m === "POST") return cliStart(req, env);
   if (p === "/api/cli/poll" && m === "POST") return cliPoll(req, env);
   if (p === "/install.sh") return new Response(installScript(origin), { headers: { "content-type": "text/plain; charset=utf-8" } });
+  if (p === "/install.ps1") return new Response(installPowerShell(origin), { headers: { "content-type": "text/plain; charset=utf-8" } });
 
   if (p === "/login") {
     if (env.DEV_LOGIN === "1" && !env.GITHUB_CLIENT_ID) return html(pages.devLogin(makeCtx(req, null), url.searchParams.get("next") || "/me"));

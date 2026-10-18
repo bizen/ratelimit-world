@@ -17,7 +17,7 @@ import { spawn, spawnSync, execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const VERSION = "0.8.0";
+const VERSION = "0.9.0";
 const DEFAULT_SERVER = "https://ratelimit.world";
 const HOME = path.join(os.homedir(), ".ratelimit-world");
 const CONFIG_FILE = path.join(HOME, "config.json");
@@ -346,7 +346,7 @@ const AG_POLL_MS = 4 * 60000;
 function readAgUsage() {
   const bin = findBin("agy");
   if (!bin) return null;
-  const r = spawnSync(bin, ["-p", "/usage", "--output-format", "json"], { cwd: os.tmpdir(), timeout: 30000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  const r = runBin(bin, ["-p", "/usage", "--output-format", "json"], { cwd: os.tmpdir(), timeout: 30000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   if (r.status !== 0 || !r.stdout) return null;
   try { return JSON.parse(r.stdout).command?.data?.groups ?? null; } catch { return null; }
 }
@@ -626,7 +626,7 @@ async function sync({ full = false, quiet = false, reason = "manual", active = n
     }
     log(`sync ok (${reason}) windows=${payload.windows.length}`);
     // すでに入れている人も、Cowork を使っていれば 5分ごとの送信を足す (1回だけ)
-    if (process.platform === "darwin" && !fs.existsSync(timerPlist()) && (fs.existsSync(coworkDir()) || findBin("agy")) && realpath(SELF) === realpath(INSTALLED_SCRIPT)) {
+    if (canSchedule() && !jobExists(TIMER_LABEL) && (fs.existsSync(coworkDir()) || findBin("agy")) && realpath(SELF) === realpath(INSTALLED_SCRIPT)) {
       if (installTimer()) log("timer installed (cowork / antigravity)");
     }
     if (!quiet) console.log(L(`送信しました: ${payload.windows.length} 件。今日 ${r.today ?? "?"} / ${r.goal ?? "?"} 枠、${r.streak ?? 0} 日連続`, `Sent ${payload.windows.length} windows. Today ${r.today ?? "?"}/${r.goal ?? "?"}, ${r.streak ?? 0}-day streak`));
@@ -663,91 +663,150 @@ async function maybeUpdate() {
   log(`updated ${VERSION} -> ${meta.version}`);
 }
 
-// ---------- timer (Mac) ----------
-// Cowork には hooks がないので、Mac では 5分ごとに自分で送る (launchd)。ログイン中ずっと動き、スリープ中は止まる
-const TIMER_LABEL = "world.ratelimit.sync";
-const timerPlist = () => path.join(os.homedir(), "Library", "LaunchAgents", `${TIMER_LABEL}.plist`);
+// ---------- background jobs (Mac: launchd / Windows: タスク スケジューラ) ----------
+// 5分ごとの送信と、自動ウォームアップの 1回だけの予約に使う。どちらの OS でも、スリープ中に過ぎた予約は起きたときに動く
+const IS_MAC = process.platform === "darwin", IS_WIN = process.platform === "win32";
+const canSchedule = () => IS_MAC || IS_WIN;
+const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const plistPath = (label) => path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
+// Windows のタスク名 (Mac のラベルの "world.ratelimit." を "ratelimit-world-" に)
+const winTask = (label) => label.replace(/^world\.ratelimit\./, "ratelimit-world-").replace(/\./g, "-");
+// Windows: タスクから node を動かすとコンソールが一瞬出るので、窓を出さずに動かす小さな VBScript を通す
+const HIDDEN_VBS = path.join(HOME, "run-hidden.vbs");
+function ensureHiddenRunner() {
+  const q = (x) => String(x).replace(/"/g, '""');
+  fs.mkdirSync(HOME, { recursive: true });
+  fs.writeFileSync(HIDDEN_VBS, [
+    "Dim a, i",
+    "For i = 0 To WScript.Arguments.Count - 1",
+    '  a = a & " """ & WScript.Arguments(i) & """"',
+    "Next",
+    `CreateObject("WScript.Shell").Run """${q(process.execPath)}"" ""${q(INSTALLED_SCRIPT)}""" & a, 0, False`,
+    "",
+  ].join("\r\n"));
+}
+const psq = (x) => `'${String(x).replace(/'/g, "''")}'`;
+function powershell(script) {
+  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], { stdio: "ignore", windowsHide: true });
+}
+// その時刻を、その PC の現地時刻で "2026-10-18T08:00:00" に (PowerShell の -At に渡す)
+const localIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:00`;
 
-function installTimer() {
-  if (process.platform !== "darwin") return false;
-  const xml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>${TIMER_LABEL}</string>
-  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(INSTALLED_SCRIPT)}</string><string>sync</string><string>--quiet</string><string>--reason</string><string>timer</string></array>
-  <key>StartInterval</key><integer>300</integer>
-  <key>StandardInPath</key><string>/dev/null</string>
-</dict></plist>
-`;
-  fs.mkdirSync(path.dirname(timerPlist()), { recursive: true });
-  fs.writeFileSync(timerPlist(), plist);
-  const uid = String(process.getuid());
-  try { execFileSync("launchctl", ["bootout", `gui/${uid}/${TIMER_LABEL}`], { stdio: "ignore" }); } catch {}
-  try { execFileSync("launchctl", ["bootstrap", `gui/${uid}`, timerPlist()], { stdio: "ignore" }); } catch (e) { log(`timer: ${e.message}`); }
-  return true;
+// Windows: タスク スケジューラに登録する PowerShell。wscript で窓を出さずに node を動かす。
+// StartWhenAvailable で、スリープ中に過ぎた予約も起きたときに動く
+export function winTaskScript({ label, args, every, at, vbs }) {
+  const argStr = [`"${vbs}"`, ...args.map((a) => `"${a}"`)].join(" ");
+  const trigger = every
+    ? `New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes ${every})`
+    : `New-ScheduledTaskTrigger -Once -At ${psq(localIso(at))}`;
+  return [
+    `$a = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ${psq(argStr)}`,
+    `$t = ${trigger}`,
+    "$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries",
+    `Register-ScheduledTask -TaskName ${psq(winTask(label))} -Action $a -Trigger $t -Settings $s -Force | Out-Null`,
+  ].join("; ");
 }
 
-function removeTimer() {
-  if (process.platform !== "darwin") return;
-  try { execFileSync("launchctl", ["bootout", `gui/${process.getuid()}/${TIMER_LABEL}`], { stdio: "ignore" }); } catch {}
-  fs.rmSync(timerPlist(), { force: true });
-}
-
-// ---------- auto warm-up (Mac) ----------
-// リセットの瞬間に、Claude Code / Codex へ短い問い合わせを 1回送って次の 5時間枠を始める。
-// 送信のたびに、サーバーから受け取ったリセット時刻に合わせて launchd に 1回だけの予約を入れ直す (スリープ中なら起きたときに動く)
-const WARMUP_TOOLS = ["claude", "codex"];
-const warmupLabel = (tool) => `world.ratelimit.warmup.${tool}`;
-const warmupPlist = (tool) => path.join(os.homedir(), "Library", "LaunchAgents", `${warmupLabel(tool)}.plist`);
-
-// コマンドの場所: hooks から呼ばれたときの PATH と、よく入る場所を探す (launchd から動くときは PATH がほぼ空なので)
-function findBin(name) {
-  const dirs = [...(process.env.PATH || "").split(path.delimiter), path.join(os.homedir(), ".local", "bin"), path.join(os.homedir(), ".claude", "local"), "/opt/homebrew/bin", "/usr/local/bin"];
-  for (const d of dirs) {
-    if (!d) continue;
-    const p = path.join(d, name);
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
-  }
-  return null;
-}
-
-function removeWarmup(tool) {
-  if (process.platform !== "darwin") return;
-  try { execFileSync("launchctl", ["bootout", `gui/${process.getuid()}/${warmupLabel(tool)}`], { stdio: "ignore" }); } catch {}
-  fs.rmSync(warmupPlist(tool), { force: true });
-}
-
-// setting.at[tool] = { at: 送る時刻, since: 今の枠が終わる時刻 } はサーバーが決める (毎日そろえる設定もサーバー側で当てる)
-function scheduleWarmups(setting) {
-  if (process.platform !== "darwin") return;
-  const cfg = loadConfig();
-  const planned = { ...(cfg.warmupPlanned || {}) };
-  for (const tool of WARMUP_TOOLS) {
-    const plan = setting?.on ? setting.at?.[tool] : null;
-    if (!plan) { if (planned[tool] || fs.existsSync(warmupPlist(tool))) removeWarmup(tool); delete planned[tool]; continue; }
-    const bin = findBin(tool);
-    if (!bin || !(plan.at > 0)) continue;
-    if (planned[tool]?.at === plan.at && fs.existsSync(warmupPlist(tool))) continue;
-    // launchd は分単位: 予定の時刻を含む分 (秒があれば次の分)。もう過ぎていれば次の分
-    const at = new Date(Math.max(Math.ceil(plan.at / 60000), Math.ceil((Date.now() + 1000) / 60000)) * 60000);
-    const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    const PATH = [path.dirname(process.execPath), path.dirname(bin), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
+// job = { label, args (CLI に渡す引数), every (分ごとに繰り返す) | at (この時刻に 1回), path (Mac: 追加の PATH) }
+function scheduleJob({ label, args, every, at, extraPath = [] }) {
+  if (IS_MAC) {
+    const PATH = [path.dirname(process.execPath), ...extraPath, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
+    const when = every ? `<key>StartInterval</key><integer>${every * 60}</integer>`
+      : `<key>StartCalendarInterval</key><dict><key>Month</key><integer>${at.getMonth() + 1}</integer><key>Day</key><integer>${at.getDate()}</integer><key>Hour</key><integer>${at.getHours()}</integer><key>Minute</key><integer>${at.getMinutes()}</integer></dict>`;
     const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>${warmupLabel(tool)}</string>
-  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(INSTALLED_SCRIPT)}</string><string>warmup</string><string>${tool}</string><string>${plan.at}</string><string>${plan.since}</string></array>
-  <key>StartCalendarInterval</key><dict><key>Month</key><integer>${at.getMonth() + 1}</integer><key>Day</key><integer>${at.getDate()}</integer><key>Hour</key><integer>${at.getHours()}</integer><key>Minute</key><integer>${at.getMinutes()}</integer></dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(INSTALLED_SCRIPT)}</string>${args.map((a) => `<string>${xml(a)}</string>`).join("")}</array>
+  ${when}
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(PATH)}</string></dict>
   <key>StandardInPath</key><string>/dev/null</string>
   <key>AbandonProcessGroup</key><true/>
 </dict></plist>
 `;
-    removeWarmup(tool);
-    fs.mkdirSync(path.dirname(warmupPlist(tool)), { recursive: true });
-    fs.writeFileSync(warmupPlist(tool), plist);
-    try { execFileSync("launchctl", ["bootstrap", `gui/${process.getuid()}`, warmupPlist(tool)], { stdio: "ignore" }); } catch (e) { log(`warmup schedule ${tool}: ${e.message}`); continue; }
+    unscheduleJob(label);
+    fs.mkdirSync(path.dirname(plistPath(label)), { recursive: true });
+    fs.writeFileSync(plistPath(label), plist);
+    execFileSync("launchctl", ["bootstrap", `gui/${process.getuid()}`, plistPath(label)], { stdio: "ignore" });
+  } else if (IS_WIN) {
+    ensureHiddenRunner();
+    powershell(winTaskScript({ label, args, every, at, vbs: HIDDEN_VBS }));
+    saveConfig({ ...loadConfig(), winJobs: { ...(loadConfig().winJobs || {}), [label]: true } });
+  }
+}
+
+function unscheduleJob(label) {
+  if (IS_MAC) {
+    try { execFileSync("launchctl", ["bootout", `gui/${process.getuid()}/${label}`], { stdio: "ignore" }); } catch {}
+    fs.rmSync(plistPath(label), { force: true });
+  } else if (IS_WIN && loadConfig().winJobs?.[label]) {
+    try { powershell(`Unregister-ScheduledTask -TaskName ${psq(winTask(label))} -Confirm:$false -ErrorAction SilentlyContinue`); } catch {}
+    const jobs = { ...(loadConfig().winJobs || {}) };
+    delete jobs[label];
+    saveConfig({ ...loadConfig(), winJobs: jobs });
+  }
+}
+
+const jobExists = (label) => (IS_MAC ? fs.existsSync(plistPath(label)) : IS_WIN ? !!loadConfig().winJobs?.[label] : false);
+
+// ---------- timer ----------
+// Cowork や Antigravity には hooks がないので、5分ごとに自分で送る
+const TIMER_LABEL = "world.ratelimit.sync";
+function installTimer() {
+  if (!canSchedule()) return false;
+  try { scheduleJob({ label: TIMER_LABEL, args: ["sync", "--quiet", "--reason", "timer"], every: 5 }); return true; } catch (e) { log(`timer: ${e.message}`); return false; }
+}
+function removeTimer() { unscheduleJob(TIMER_LABEL); }
+
+// ---------- auto warm-up ----------
+// リセットの瞬間に、Claude Code / Codex へ短い問い合わせを 1回送って次の 5時間枠を始める。
+// 送信のたびに、サーバーから受け取った時刻に合わせて 1回だけの予約を入れ直す (スリープ中なら起きたときに動く)
+const WARMUP_TOOLS = ["claude", "codex"];
+const warmupLabel = (tool) => `world.ratelimit.warmup.${tool}`;
+
+// コマンドの場所: hooks から呼ばれたときの PATH と、よく入る場所を探す (予約から動くときは PATH がほぼ空なので)。
+// Windows は claude.exe / codex.cmd / agy.exe のように拡張子つき
+function findBin(name) {
+  const home = os.homedir();
+  const dirs = [...(process.env.PATH || "").split(path.delimiter), path.join(home, ".local", "bin"), path.join(home, ".claude", "local"),
+    ...(IS_WIN ? [path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), "npm"), path.join(process.env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "Programs", name)] : ["/opt/homebrew/bin", "/usr/local/bin"])];
+  const exts = IS_WIN ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";").filter(Boolean).map((e) => e.toLowerCase()) : [""];
+  for (const d of dirs) {
+    if (!d) continue;
+    for (const ext of exts) {
+      const p = path.join(d, name + ext);
+      try { fs.accessSync(p, IS_WIN ? fs.constants.F_OK : fs.constants.X_OK); return p; } catch {}
+    }
+  }
+  return null;
+}
+
+// コマンドを動かす。Windows の .cmd / .bat はシェル経由でないと動かない (引数はこちらで決めた固定の文字列だけ)
+function runBin(bin, args, opts = {}) {
+  if (IS_WIN && /\.(cmd|bat)$/i.test(bin)) {
+    const q = (x) => `"${String(x).replace(/"/g, '\\"')}"`;
+    return spawnSync([q(bin), ...args.map(q)].join(" "), { ...opts, shell: true, windowsHide: true });
+  }
+  return spawnSync(bin, args, { ...opts, windowsHide: true });
+}
+
+function removeWarmup(tool) { unscheduleJob(warmupLabel(tool)); }
+
+// setting.at[tool] = { at: 送る時刻, since: 今の枠が終わる時刻 } はサーバーが決める (毎日そろえる設定もサーバー側で当てる)
+function scheduleWarmups(setting) {
+  if (!canSchedule()) return;
+  const cfg = loadConfig();
+  const planned = { ...(cfg.warmupPlanned || {}) };
+  for (const tool of WARMUP_TOOLS) {
+    const plan = setting?.on ? setting.at?.[tool] : null;
+    if (!plan) { if (planned[tool] || jobExists(warmupLabel(tool))) removeWarmup(tool); delete planned[tool]; continue; }
+    const bin = findBin(tool);
+    if (!bin || !(plan.at > 0)) continue;
+    if (planned[tool]?.at === plan.at && jobExists(warmupLabel(tool))) continue;
+    // 予約は分単位: 予定の時刻を含む分 (秒があれば次の分)。もう過ぎていれば次の分
+    const at = new Date(Math.max(Math.ceil(plan.at / 60000), Math.ceil((Date.now() + 1000) / 60000)) * 60000);
+    try { scheduleJob({ label: warmupLabel(tool), args: ["warmup", tool, String(plan.at), String(plan.since)], at, extraPath: [path.dirname(bin)] }); }
+    catch (e) { log(`warmup schedule ${tool}: ${e.message}`); continue; }
     planned[tool] = { at: plan.at, since: plan.since, bookedFor: at.getTime() };
     log(`warmup ${tool} scheduled at ${at.toISOString()}`);
   }
@@ -761,7 +820,7 @@ async function warmup(tool, at, since) {
   // ここで外すと、動いている自分自身が止められてしまう
   const finish = (msg) => {
     log(`warmup ${tool}: ${msg}`);
-    fs.rmSync(warmupPlist(tool), { force: true });
+    if (IS_MAC) fs.rmSync(plistPath(warmupLabel(tool)), { force: true });
   };
   if (!WARMUP_TOOLS.includes(tool) || !(at > 0)) return finish("bad arguments");
   since = since > 0 ? since : at;
@@ -775,12 +834,12 @@ async function warmup(tool, at, since) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rw-warmup-"));
   const args = tool === "claude"
     ? ["-p", "Reply with OK only.", "--model", "haiku", "--output-format", "json"]
-    : ["exec", "--skip-git-repo-check", "-s", "read-only", "-c", 'model_reasoning_effort="low"', "Reply with OK only. Do not run any commands."];
-  const r = spawnSync(bin, args, { cwd: dir, stdio: ["ignore", "ignore", "ignore"], timeout: 5 * 60000 });
+    : ["exec", "--skip-git-repo-check", "-s", "read-only", "-c", "model_reasoning_effort=low", "Reply with OK only. Do not run any commands."];
+  const r = runBin(bin, args, { cwd: dir, stdio: ["ignore", "ignore", "ignore"], timeout: 5 * 60000 });
   fs.rmSync(dir, { recursive: true, force: true });
   finish(r.error ? `failed: ${r.error.message}` : `sent (exit ${r.status})`);
   // 新しい枠をすぐサーバーへ送り、次の予約を入れ直す。自分が終わってから動くよう、少し待つ別のプロセスで
-  spawn("/bin/sh", ["-c", `sleep 3; "${process.execPath}" "${INSTALLED_SCRIPT}" sync --quiet --reason warmup`], { detached: true, stdio: "ignore" }).unref();
+  spawn(process.execPath, [INSTALLED_SCRIPT, "sync", "--quiet", "--reason", "warmup", "--delay", "3"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
 }
 
 // ---------- hooks ----------
@@ -789,22 +848,23 @@ function hook(tool, event, rest) {
   const args = [SELF, "sync", "--quiet", "--reason", event === "limit" ? "limit" : "hook"];
   if (event === "prompt") args.push("--active", tool);
   const child = spawn(process.execPath, args, {
-    detached: true, stdio: "ignore",
+    detached: true, stdio: "ignore", windowsHide: true,
   });
   child.unref();
   // Codex の notify は 1つしか登録できないので、元々あった notify をそのまま呼び直す
   if (tool === "codex") {
     const prev = loadConfig().prevCodexNotify;
     if (Array.isArray(prev) && prev.length) {
-      const c = spawn(prev[0], [...prev.slice(1), ...rest], { detached: true, stdio: "ignore" });
+      const c = spawn(prev[0], [...prev.slice(1), ...rest], { detached: true, stdio: "ignore", windowsHide: true, shell: IS_WIN && /\.(cmd|bat)$/i.test(prev[0]) });
       c.on("error", () => {});
       c.unref();
     }
   }
 }
 
-const nodeCmd = () => (process.execPath.includes(" ") ? `"${process.execPath}"` : process.execPath);
-const claudeHookCmd = (event) => `${nodeCmd()} "${INSTALLED_SCRIPT}" hook claude ${event}`;
+const fwd = (p) => (IS_WIN ? p.replace(/\\/g, "/") : p);
+const nodeCmd = () => `"${fwd(process.execPath)}"`;
+const claudeHookCmd = (event) => `${nodeCmd()} "${fwd(INSTALLED_SCRIPT)}" hook claude ${event}`;
 
 function installClaudeHooks() {
   const file = path.join(claudeDir(), "settings.json");
@@ -847,7 +907,7 @@ export function setStatusline(on) {
   const ours = JSON.stringify(s.statusLine ?? "").includes(HOOK_MARK);
   if (on && !ours) {
     if (s.statusLine) cfg.prevClaudeStatusLine = s.statusLine;
-    s.statusLine = { ...(s.statusLine ?? {}), type: "command", command: `${nodeCmd()} "${INSTALLED_SCRIPT}" statusline` };
+    s.statusLine = { ...(s.statusLine ?? {}), type: "command", command: `${nodeCmd()} "${fwd(INSTALLED_SCRIPT)}" statusline` };
   } else if (!on && ours) {
     if (cfg.prevClaudeStatusLine) s.statusLine = cfg.prevClaudeStatusLine; else delete s.statusLine;
     delete cfg.prevClaudeStatusLine;
@@ -1139,7 +1199,7 @@ function status() {
   console.log(`\n⚡ ${L("自動ウォームアップ", "Auto warm-up")}: ${wu?.on ? L(`オン${wu.anchor ? `（毎日 ${wu.anchor} にそろえる）` : ""}`, `on${wu.anchor ? ` (same times every day from ${wu.anchor})` : ""}`) : L("オフ", "off")}`);
   for (const tool of WARMUP_TOOLS) {
     const b = cfg.warmupPlanned?.[tool];
-    if (wu?.on && b && fs.existsSync(warmupPlist(tool))) console.log(L(`  ${tool.padEnd(6)} ${fmt(b.bookedFor ?? b.at)} に送る予定`, `  ${tool.padEnd(6)} will send at ${fmt(b.bookedFor ?? b.at)}`));
+    if (wu?.on && b && jobExists(warmupLabel(tool))) console.log(L(`  ${tool.padEnd(6)} ${fmt(b.bookedFor ?? b.at)} に送る予定`, `  ${tool.padEnd(6)} will send at ${fmt(b.bookedFor ?? b.at)}`));
   }
 }
 
@@ -1153,10 +1213,14 @@ if (isMain) {
   const cmd = argv[0];
   try {
     if (cmd === "setup") await setup(flag("--server"));
-    else if (cmd === "sync") process.exitCode = (await sync({ full: argv.includes("--full"), quiet: argv.includes("--quiet"), reason: flag("--reason") || "manual", active: flag("--active") })) ? 0 : 1;
+    else if (cmd === "sync") {
+      // --delay N: N 秒待ってから送る (ウォームアップのあと、呼んだ側が終わってから予約を入れ直すため)
+      if (flag("--delay")) await new Promise((r) => setTimeout(r, Number(flag("--delay")) * 1000));
+      process.exitCode = (await sync({ full: argv.includes("--full"), quiet: argv.includes("--quiet"), reason: flag("--reason") || "manual", active: flag("--active") })) ? 0 : 1;
+    }
     else if (cmd === "hook") hook(argv[1], argv[2], argv.slice(3));
     else if (cmd === "statusline") await statusline();
-    else if (cmd === "menubar") (argv[1] === "install" ? menubarInstall() : menubar());
+    else if (cmd === "menubar") (argv[1] === "install" && !IS_MAC ? console.log(L("メニューバーは Mac だけです", "The menu bar is Mac only")) : argv[1] === "install" ? menubarInstall() : menubar());
     else if (cmd === "scan") console.log(JSON.stringify(collect(Number(flag("--days")) || 7), null, 2));
     else if (cmd === "status") status();
     else if (cmd === "warmup") await warmup(argv[1], Number(argv[2]), Number(argv[3]));
